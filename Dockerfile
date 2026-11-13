@@ -3,10 +3,11 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# 패키지 매니저 파일 복사 및 설치
+# 패키지 매니저 파일 복사
 COPY package.json pnpm-lock.yaml* package-lock.json* yarn.lock* ./
 
-RUN npm install
+# npm peer dependency 충돌 방지 (--legacy-peer-deps)
+RUN npm install --legacy-peer-deps
 
 # 전체 소스 복사
 COPY . .
@@ -23,7 +24,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 COPY package.json ./
-RUN npm install --omit=dev && npm install -g tsx
+RUN npm install --omit=dev --legacy-peer-deps && npm install -g tsx
 
 # 빌드 결과물 및 서버 실행 파일 복사
 COPY --from=builder /app/dist ./dist
