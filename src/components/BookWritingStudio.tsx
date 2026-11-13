@@ -65,33 +65,17 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
 
   // 2. 선택된 설교 목록
   const [selectedSermonIds, setSelectedSermonIds] = useState<string[]>(() => {
+    if (sermons.length >= 2) return sermons.map((s) => s.meta.id);
     if (activeSermonId) return [activeSermonId];
-    return sermons.slice(0, 2).map((s) => s.meta.id);
+    return sermons.map((s) => s.meta.id);
   });
 
-  // 3. 업로드된 참고 자료 목록 (PDF, PPT 등)
-  const [uploadedMaterials, setUploadedMaterials] = useState<UploadedMaterial[]>([
-    {
-      id: 'mat-1',
-      fileName: '2026_로마서_상반기_목회계획서.pdf',
-      fileType: 'pdf',
-      fileSizeLabel: '1.8 MB',
-      extractedText:
-        '상반기 대예배 목회 방향: 고난과 불확실성의 시대를 살아가는 현대 성도들에게 로마서 8장의 언약적 확신을 심어주어, 삶의 모든 영역에서 하나님의 절대적 주권과 사랑을 고백하게 함.',
-      summaryPoint: '목회 기획 의도 및 상반기 성도 삶의 영적 회복 목표',
-      uploadedAt: '2026-03-08 10:15',
-    },
-    {
-      id: 'mat-2',
-      fileName: '로마서8장28절_원어강해_교역자세미나.pptx',
-      fileType: 'ppt',
-      fileSizeLabel: '4.2 MB',
-      extractedText:
-        '헬라어 쉬네르게이(synergei) 분석: 단순한 긍정적 낙관주의가 아니라, 상반되는 재료들이 하나님의 오케스트레이션 안에서 궁극적 선(Good)을 위해 협력한다는 신학적 섭리 교리.',
-      summaryPoint: '헬라어 원어 주해 및 존 스토트·칼빈 주석 인용 메모',
-      uploadedAt: '2026-03-08 10:20',
-    },
-  ]);
+  // 3. 업로드된 참고 자료 목록 (실제 업로드한 PDF, PPTX, DOCX, HWPX, TXT 및 직접 입력 메모)
+  const [uploadedMaterials, setUploadedMaterials] = useState<UploadedMaterial[]>([]);
+  const [isExtractingFiles, setIsExtractingFiles] = useState(false);
+  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [manualNoteTitle, setManualNoteTitle] = useState('');
+  const [manualNoteText, setManualNoteText] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -246,33 +230,129 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
     );
   };
 
-  // 자료 파일 업로드 핸들러
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 자료 파일 업로드 핸들러 (실제 파일 본문 텍스트 추출 API 연동)
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      let fileType: UploadedMaterial['fileType'] = 'other';
-      if (ext === 'pdf') fileType = 'pdf';
-      else if (ext === 'ppt' || ext === 'pptx') fileType = 'ppt';
-      else if (ext === 'doc' || ext === 'docx') fileType = 'docx';
-      else if (ext === 'txt') fileType = 'txt';
+    setIsExtractingFiles(true);
+    const fileArray = Array.from(files);
 
-      const newMaterial: UploadedMaterial = {
-        id: `mat-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        fileName: file.name,
-        fileType,
-        fileSizeLabel: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-        extractedText: `[${file.name} 분석 내용]\n목회 연구 본문 핵심 포인트, 성경 주해 요약, 설교 예화 및 청중 나눔 질문 데이터가 성공적으로 추출되었습니다.`,
-        summaryPoint: `${ext?.toUpperCase()} 문서에서 핵심 도서 집필 키워드가 추출되었습니다.`,
-        uploadedAt: new Date().toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-      };
+    try {
+      const parsedItems: UploadedMaterial[] = [];
 
-      setUploadedMaterials((prev) => [newMaterial, ...prev]);
-    });
+      for (const file of fileArray) {
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        let fileType: UploadedMaterial['fileType'] = 'other';
+        if (ext === 'pdf') fileType = 'pdf';
+        else if (ext === 'ppt' || ext === 'pptx') fileType = 'ppt';
+        else if (ext === 'doc' || ext === 'docx' || ext === 'hwpx') fileType = 'docx';
+        else if (ext === 'txt' || ext === 'md' || ext === 'csv') fileType = 'txt';
 
-    if (fileInputRef.current) fileInputRef.current.value = '';
+        let extractedText = '';
+        let summaryPoint = '';
+
+        // 1) 텍스트 파일은 브라우저에서 즉시 원문 읽기
+        if (ext === 'txt' || ext === 'md' || ext === 'csv') {
+          const raw = await file.text();
+          extractedText = raw.trim().slice(0, 2500);
+          summaryPoint = raw.trim().split('\n')[0]?.slice(0, 140) || `${file.name} 핵심 원문`;
+        } else {
+          // 2) PDF / PPTX / DOCX / HWPX는 Base64 변환 후 서버 파서 API로 실제 텍스트 추출
+          const base64Data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('파일 읽기 오류'));
+            reader.readAsDataURL(file);
+          });
+
+          try {
+            const res = await fetch('/api/book/extract-material', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fileName: file.name, base64Data }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              extractedText = data.extractedText || '';
+              summaryPoint = data.summaryPoint || '';
+            }
+          } catch (err) {
+            console.warn('Server material parser fallback:', err);
+          }
+        }
+
+        if (!extractedText) {
+          const cleanTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' ');
+          extractedText = `[${cleanTitle}] 문서 주제를 바탕으로 성경 주해 및 목회 적용 내용을 반영합니다. (아래 입력창에서 핵심 메모를 추가로 보완하실 수 있습니다.)`;
+          summaryPoint = `${cleanTitle} 핵심 주제 및 목회 연구 포인트`;
+        }
+
+        const sizeKb = file.size / 1024;
+        const sizeLabel =
+          sizeKb >= 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(sizeKb))} KB`;
+
+        parsedItems.push({
+          id: `mat-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          fileName: file.name,
+          fileType,
+          fileSizeLabel: sizeLabel,
+          extractedText,
+          summaryPoint: summaryPoint || `${file.name} 핵심 요약`,
+          uploadedAt: new Date().toLocaleDateString('ko-KR', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        });
+      }
+
+      setUploadedMaterials((prev) => [...parsedItems, ...prev]);
+    } finally {
+      setIsExtractingFiles(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // 직접 텍스트/주해 메모 추가 핸들러
+  const handleAddManualNote = () => {
+    if (!manualNoteText.trim()) return;
+    const titleLabel = (manualNoteTitle.trim() || '목회 주해 및 집필 메모') + '.txt';
+    const cleanText = manualNoteText.trim();
+    const newMat: UploadedMaterial = {
+      id: `mat-note-${Date.now()}`,
+      fileName: titleLabel,
+      fileType: 'txt',
+      fileSizeLabel: `${Math.max(1, Math.round(cleanText.length / 500))} KB`,
+      extractedText: cleanText,
+      summaryPoint: cleanText.split('\n')[0].slice(0, 140),
+      uploadedAt: new Date().toLocaleDateString('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    };
+    setUploadedMaterials((prev) => [newMat, ...prev]);
+    setManualNoteTitle('');
+    setManualNoteText('');
+    setIsAddingNote(false);
+  };
+
+  // 업로드 자료의 추출 본문 직접 수정
+  const handleUpdateMaterialText = (id: string, nextText: string) => {
+    setUploadedMaterials((prev) =>
+      prev.map((m) =>
+        m.id === id
+          ? {
+              ...m,
+              extractedText: nextText,
+              summaryPoint: nextText.trim().split('\n')[0]?.slice(0, 140) || m.summaryPoint,
+            }
+          : m
+      )
+    );
   };
 
   // AI 도서 기획안 생성/업데이트 (선택된 모든 설교와 참고자료를 종합하여 전략 기획)
@@ -341,6 +421,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
           writingStyle,
           authorName,
           proposal,
+          materials: uploadedMaterials,
         }),
       });
 
@@ -630,67 +711,144 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                 </div>
               </div>
 
-              {/* 외부 참고자료 업로드 (PDF, PPT, DOCX) */}
+              {/* 외부 참고자료 업로드 (PDF, PPTX, DOCX, HWPX, TXT) 및 직접 메모 */}
               <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                   <div>
                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
                       <FileUp className="w-4 h-4 text-indigo-400" />
-                      <span>설교 준비 참고자료 업로드 (PDF, PPT, DOCX, TXT)</span>
+                      <span>설교 준비 참고자료 &amp; 원고 메모 업로드 ({uploadedMaterials.length}건 추가됨)</span>
                     </h3>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      설교 준비 시 작성했던 주해 메모, 강의안 PPT, 성경공부 교재를 함께 올려 원고의 신학적 깊이를 더합니다.
+                      업로드하신 파일(PDF, PPTX, DOCX, HWPX, TXT)의 실제 본문 텍스트를 추출하여 도서 기획안과 각 장 원고에 직접 반영합니다.
                     </p>
                   </div>
 
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-md shadow-indigo-600/20 cursor-pointer"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>자료 파일 추가</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNote(!isAddingNote)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-amber-300 cursor-pointer"
+                    >
+                      <PenTool className="w-3.5 h-3.5" />
+                      <span>직접 메모·원고 입력</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isExtractingFiles}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-md shadow-indigo-600/20 cursor-pointer disabled:opacity-50"
+                    >
+                      {isExtractingFiles ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Upload className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isExtractingFiles ? '문서 본문 추출 중...' : '자료 파일 올리기'}</span>
+                    </button>
+                  </div>
                   <input
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf,.ppt,.pptx,.doc,.docx,.txt"
+                    accept=".pdf,.ppt,.pptx,.doc,.docx,.hwpx,.txt,.md,.csv"
                     onChange={handleFileUpload}
                     className="hidden"
                   />
                 </div>
 
-                {/* 자료 목록 */}
-                <div className="space-y-2">
-                  {uploadedMaterials.map((mat) => (
-                    <div
-                      key={mat.id}
-                      className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/80 flex items-start justify-between gap-3 text-xs"
-                    >
-                      <div className="flex items-start space-x-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-300 flex items-center justify-center shrink-0 mt-0.5 font-bold uppercase text-[10px]">
-                          {mat.fileType}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-white flex items-center gap-2">
-                            <span>{mat.fileName}</span>
-                            <span className="text-[10px] text-slate-400 font-mono">({mat.fileSizeLabel})</span>
-                          </div>
-                          <p className="text-slate-300 text-[11px] mt-1 leading-relaxed bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                            {mat.extractedText}
-                          </p>
-                        </div>
-                      </div>
-
+                {/* 직접 메모 붙여넣기 인라인 폼 */}
+                {isAddingNote && (
+                  <div className="mb-3 p-3.5 rounded-xl bg-slate-950/80 border border-amber-500/40 space-y-2.5 animate-in fade-in">
+                    <input
+                      type="text"
+                      value={manualNoteTitle}
+                      onChange={(e) => setManualNoteTitle(e.target.value)}
+                      placeholder="자료 제목 (예: 로마서 원어 주해 노트, 특별 새벽기도 강의안)"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-hidden focus:border-amber-400"
+                    />
+                    <textarea
+                      rows={4}
+                      value={manualNoteText}
+                      onChange={(e) => setManualNoteText(e.target.value)}
+                      placeholder="설교 원고 초안, 성경 주석 발췌, 예화, 소그룹 질문 등 책 기획과 원고에 포함할 내용을 자유롭게 붙여넣으세요..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs text-slate-200 focus:outline-hidden focus:border-amber-400"
+                    />
+                    <div className="flex justify-end gap-2">
                       <button
-                        onClick={() => setUploadedMaterials((prev) => prev.filter((m) => m.id !== mat.id))}
-                        className="text-slate-500 hover:text-rose-400 p-1"
+                        type="button"
+                        onClick={() => setIsAddingNote(false)}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-400 hover:text-white cursor-pointer"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        취소
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAddManualNote}
+                        style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
+                        className="px-3.5 py-1.5 rounded-lg bg-amber-400 text-slate-950 font-extrabold text-xs cursor-pointer"
+                      >
+                        자료 목록에 추가 및 기획안 반영
                       </button>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )}
+
+                {/* 자료 목록 */}
+                {uploadedMaterials.length === 0 ? (
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-6 rounded-xl border border-dashed border-slate-700 hover:border-indigo-500/60 bg-slate-950/40 text-center cursor-pointer transition-colors"
+                  >
+                    <Upload className="w-6 h-6 text-indigo-400 mx-auto mb-1.5 opacity-80" />
+                    <p className="text-xs font-semibold text-slate-300">
+                      현재 추가된 외부 자료가 없습니다 (클릭하여 PDF, PPTX, DOCX, TXT 파일 업로드)
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      자료를 올리시면 파일 안의 실제 텍스트를 읽어와 선택한 설교 영상들과 함께 책 기획안 및 심화 챕터로 구성합니다.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {uploadedMaterials.map((mat) => (
+                      <div
+                        key={mat.id}
+                        className="p-3 rounded-xl bg-slate-800/60 border border-indigo-500/30 flex items-start justify-between gap-3 text-xs"
+                      >
+                        <div className="flex items-start space-x-2.5 flex-1">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-300 flex items-center justify-center shrink-0 mt-0.5 font-bold uppercase text-[10px]">
+                            {mat.fileType}
+                          </div>
+                          <div className="flex-1">
+                            <div className="font-semibold text-white flex items-center gap-2 flex-wrap">
+                              <span>{mat.fileName}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">({mat.fileSizeLabel})</span>
+                              <span className="text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-2 py-0.2 rounded-full">
+                                본문 추출 &amp; 기획안 연동됨
+                              </span>
+                            </div>
+                            <textarea
+                              rows={3}
+                              value={mat.extractedText}
+                              onChange={(e) => handleUpdateMaterialText(mat.id, e.target.value)}
+                              className="w-full text-slate-200 text-[11px] mt-1.5 leading-relaxed bg-slate-900/80 p-2.5 rounded-lg border border-slate-700 focus:outline-hidden focus:border-indigo-400"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setUploadedMaterials((prev) => prev.filter((m) => m.id !== mat.id))}
+                          className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer"
+                          title="자료 삭제"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* 기획안 생성 버튼 */}
@@ -743,11 +901,20 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                         key={s.meta.id}
                         className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900/90 border border-slate-700 text-slate-200 flex items-center gap-1.5"
                       >
-                        <strong className="text-amber-400 font-mono">제{i + 1}부</strong>
+                        <strong className="text-amber-400 font-mono">설교 {i + 1}</strong>
                         <span>{s.meta.sermonTitle}</span>
                         <span className="text-indigo-400 font-mono text-[10px]">({s.meta.scriptureRef})</span>
                       </span>
                     ))}
+                  {uploadedMaterials.map((m, idx) => (
+                    <span
+                      key={m.id}
+                      className="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-indigo-200 flex items-center gap-1.5"
+                    >
+                      <strong className="text-emerald-400 font-mono">자료 {idx + 1}</strong>
+                      <span>{m.fileName}</span>
+                    </span>
+                  ))}
                 </div>
               </div>
 

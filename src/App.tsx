@@ -11,6 +11,7 @@ import { SermonGrowthReportModal } from './components/SermonGrowthReportModal';
 import { DeviceAuthModal } from './components/DeviceAuthModal';
 import { BookWritingStudio } from './components/BookWritingStudio';
 import { AdminReleaseModal } from './components/AdminReleaseModal';
+import { AdminAppPage } from './components/AdminAppPage';
 import {
   getAllArchivedSermons,
   saveSermonToArchive,
@@ -38,6 +39,13 @@ export default function App() {
   const [isScriptureModalOpen, setIsScriptureModalOpen] = useState<boolean>(false);
   const [isBookStudioOpen, setIsBookStudioOpen] = useState<boolean>(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
+  const [isAdminAppMode, setIsAdminAppMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.location.pathname.startsWith('/admin') ||
+      new URLSearchParams(window.location.search).get('mode') === 'admin'
+    );
+  });
 
   const [authInfo, setAuthInfo] = useState<DeviceAuthInfo>({ isAuthorized: false });
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -61,9 +69,18 @@ export default function App() {
   const [analyzeBannerMsg, setAnalyzeBannerMsg] = useState<string | null>(null);
 
   useEffect(() => {
+    const onPopState = () => {
+      setIsAdminAppMode(window.location.pathname.startsWith('/admin'));
+    };
+    window.addEventListener('popstate', onPopState);
+
     const auth = getDeviceAuthInfo();
     setAuthInfo(auth);
-    if (!auth.isAuthorized) {
+
+    // 초대 링크(/?key=...)로 접속했거나 미인증 상태이면 인증 모달 표시
+    const hasInviteKey =
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('key');
+    if (!auth.isAuthorized || hasInviteKey) {
       setIsAuthModalOpen(true);
     }
 
@@ -86,6 +103,10 @@ export default function App() {
         }
       })
       .catch(() => {});
+
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+    };
   }, []);
 
   const handleDeviceAuthorized = (newAuth: DeviceAuthInfo) => {
@@ -207,6 +228,20 @@ export default function App() {
 
   const handlePrint = () => window.print();
 
+  const handleOpenAdminApp = () => {
+    window.history.pushState({}, '', '/admin');
+    setIsAdminAppMode(true);
+  };
+
+  const handleBackToStudio = () => {
+    window.history.pushState({}, '', '/');
+    setIsAdminAppMode(false);
+  };
+
+  if (isAdminAppMode) {
+    return <AdminAppPage onGoToStudio={handleBackToStudio} />;
+  }
+
   if (!activeSermon) {
     return (
       <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -235,7 +270,7 @@ export default function App() {
         onOpenAnalyzeModal={() => setIsAnalyzeModalOpen(true)}
         onOpenGrowthModal={() => setIsGrowthModalOpen(true)}
         onOpenBookStudio={() => setIsBookStudioOpen(true)}
-        onOpenAdminModal={() => setIsAdminModalOpen(true)}
+        onOpenAdminModal={handleOpenAdminApp}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onUpdateProfile={handleUpdateProfile}
       />

@@ -195,11 +195,11 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
       let currentScripture = scripture.trim();
       let currentStartTime = startTime;
 
-      // 유튜브 모드에서 제목을 비워둔 채 바로 분석을 누른 경우 자동으로 제목/본문 먼저 추출
-      if (sourceMode === 'youtube' && !currentTitle) {
+      // 유튜브 모드에서 제목을 비워두었거나 시작 시점이 00:00(미지정)인 경우 유튜브 챕터/설명란/자막에서 설교 시작 시점 자동 감지!
+      if (sourceMode === 'youtube' && (!currentTitle || currentStartTime === '00:00')) {
         const extracted = await handleAutoExtract(youtubeUrl.trim());
         if (extracted) {
-          if (extracted.title) currentTitle = extracted.title;
+          if (!currentTitle && extracted.title) currentTitle = extracted.title;
           if (extracted.scripture && !currentScripture) currentScripture = extracted.scripture;
           if (extracted.detectedStartTime && currentStartTime === '00:00') {
             currentStartTime = extracted.detectedStartTime;

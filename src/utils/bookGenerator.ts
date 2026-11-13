@@ -19,22 +19,13 @@ const formatByStyle = (
   style: BookProject['writingStyle'],
   paragraphs: string[]
 ): string => {
-  if (style === '짧고 강렬한 묵상집(QT)체') {
-    return paragraphs
-      .map((p) =>
-        p
-          .replace(/습니다\./g, '습니다.\n')
-          .replace(/입니다\./g, '입니다.\n')
-      )
-      .join('\n\n');
-  }
-  if (style === '실천적 리더십/코칭체') {
+  if (style === '실천 중심 라이프코칭체') {
     return (
       paragraphs.join('\n\n') +
-      '\n\n[리더십 코칭 포인트]\n오늘 내가 서 있는 가정과 일터의 자리에서 먼저 믿음의 첫걸음을 내딛으십시오. 작은 순종 하나가 공동체 전체의 영적 기류를 바꿉니다.'
+      '\n\n[실천 라이프 코칭 포인트]\n오늘 내가 서 있는 가정과 일터의 자리에서 먼저 믿음의 첫걸음을 내딛으십시오. 작은 순종 하나가 공동체 전체의 영적 기류를 바꿉니다.'
     );
   }
-  if (style === '깊이 있는 강해/신학체') {
+  if (style === '깊이 있는 강해·신학체') {
     return (
       paragraphs.join('\n\n') +
       '\n\n신학적으로 볼 때, 성경 본문이 증언하는 하나님의 언약(Covenant)은 인간의 조건적 성취에 좌우되지 않는 주권적 은총(Sovereign Grace)의 역사입니다.'
@@ -43,8 +34,20 @@ const formatByStyle = (
   return paragraphs.join('\n\n');
 };
 
+// 업로드 자료에서 핵심 문장 추출 헬퍼
+const getMaterialKeyExcerpt = (mat: UploadedMaterial, maxLen = 280): string => {
+  const raw = (mat.extractedText || mat.summaryPoint || '').trim();
+  if (!raw) return mat.fileName;
+  const cleanLines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 3 && !l.startsWith('[슬라이드'));
+  const joined = (cleanLines.length > 0 ? cleanLines.slice(0, 4).join(' ') : raw).slice(0, maxLen);
+  return joined;
+};
+
 /**
- * 선택된 1개 또는 다수의 설교 영상 + 업로드 자료(PDF/PPT 등)를 모두 종합 분석하여
+ * 선택된 1개 또는 다수의 설교 영상 + 업로드 자료(PDF/PPT/DOCX/TXT/직접메모)의 실제 본문을 모두 종합 분석하여
  * 전략적 도서 기획안(Proposal)과 챕터별 출판 원고 초안(Chapters)을 생성합니다.
  */
 export const buildStrategicBookPlan = (input: StrategicBookInput): {
@@ -66,8 +69,10 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
   const titles = targetSermons.map((s) => s.meta.sermonTitle);
   const scriptures = targetSermons.map((s) => s.meta.scriptureRef);
   const materialNames = materials.map((m) => m.fileName);
+  const materialSummaries = materials.map(
+    (m) => `『${m.fileName.replace(/\.[^/.]+$/, '')}』(${(m.summaryPoint || getMaterialKeyExcerpt(m, 80)).slice(0, 80)})`
+  );
 
-  // 1. 단일 설교 선택 vs 다중 설교(2편 이상) 선택에 따른 전략적 도서 제목 & 기획 의도 도출
   let mainTitle = '';
   let subTitle = '';
   let alternativeTitles: string[] = [];
@@ -76,92 +81,123 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
   let differentiationPoints: string[] = [];
   let editorialNote = '';
 
-  if (count === 1) {
+  const firstMaterialCleanTitle =
+    materials.length > 0
+      ? materials[0].fileName.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' ').trim()
+      : '';
+
+  if (count <= 1) {
     const s = targetSermons[0];
-    const cleanTitle = s.meta.sermonTitle
+    const sTitle = s?.meta.sermonTitle || firstMaterialCleanTitle || '은혜의 말씀';
+    const sScripture = s?.meta.scriptureRef || '성경 본문 강해';
+    const cleanTitle = sTitle
       .replace(/\[.*?\]/g, '')
       .replace(/\(.*?\)/g, '')
       .trim();
 
-    mainTitle = `${cleanTitle}`;
-    subTitle = `${s.meta.scriptureRef} 말씀으로 다시 세우는 ${bookType} 심화 단행본`;
+    mainTitle =
+      materials.length > 0
+        ? `${cleanTitle}: ${firstMaterialCleanTitle}의 빛으로 읽다`
+        : `${cleanTitle}`;
+    subTitle =
+      materials.length > 0
+        ? `${sScripture} 강해 설교와 ${materials.length}종의 목회 연구 자료를 통합한 ${bookType}`
+        : `${sScripture} 말씀으로 다시 세우는 ${bookType} 심화 단행본`;
+
     alternativeTitles = [
       `말씀이 삶이 되는 순간: ${cleanTitle}`,
-      `${s.meta.scriptureRef}에서 찾은 하나님의 해답`,
+      materials.length > 0
+        ? `${cleanTitle} & ${firstMaterialCleanTitle} 통합 묵상집`
+        : `${sScripture}에서 찾은 하나님의 해답`,
       `흔들리는 시대를 건너는 성도의 고백, ${cleanTitle}`,
     ];
-    publishingIntent = `본 도서는 ${churchName} ${authorName}의 핵심 강해 설교인 「${s.meta.sermonTitle}」(${s.meta.scriptureRef}) 1편을 심층 해부하고${
-      materialNames.length > 0
-        ? ` 함께 업로드된 참고 자료(${materialNames.join(', ')})의 신학적·목회적 연구 내용을 결합하여`
-        : ''
-    }, 단일 본문이 품고 있는 도입-원어주해-예화-삶의적용-결단기도의 5단 구속사적 흐름을 한 권의 완결된 '${bookType}' 단행본으로 깊이 있게 확장 기획하였습니다.`;
 
-    targetReaders = `1. ${s.meta.targetAudience || '삶의 갈림길에서 하나님의 뜻을 구하는 성도'}\n2. ${s.meta.scriptureRef} 본문을 깊이 있게 묵상하고 삶에 적용하고자 하는 그리스도인\n3. 소그룹(순모임·구역예배)에서 한 가지 성경 주제를 집중적으로 나누고자 하는 리더`;
+    publishingIntent = `본 도서는 ${churchName} ${authorName}의 강단 설교 「${sTitle}」(${sScripture})을 중심축으로 삼고${
+      materials.length > 0
+        ? `, 함께 등록된 ${materials.length}건의 핵심 연구 자료 — ${materialSummaries.join(', ')} — 의 실제 본문 통찰을 정밀하게 결합하여`
+        : ''
+    } 단일 설교의 도입·주해·예화·적용·결단을 한 권의 완결된 '${bookType}' 단행본으로 입체화하였습니다.`;
+
+    targetReaders = `1. ${s?.meta.targetAudience || '삶의 갈림길에서 하나님의 뜻을 구하는 성도'}\n2. ${sScripture} 본문${
+      materials.length > 0 ? ` 및 '${firstMaterialCleanTitle}' 주제` : ''
+    }를 깊이 있게 묵상하고 삶에 적용하고자 하는 그리스도인\n3. 소그룹(순모임·구역예배·제자훈련)에서 체계적인 나눔 교재를 찾는 목회자 및 리더`;
 
     differentiationPoints = [
-      `[단일 설교 심층 확장] 「${s.meta.sermonTitle}」 설교의 5단계 타임라인을 각 챕터로 세분화하여 성경 본문(${s.meta.scriptureRef})의 깊이를 극대화`,
-      materialNames.length > 0
-        ? `[문서 자료 융합] 업로드된 ${materialNames.length}종의 부교재(${materialNames[0]} 등) 핵심 주해와 목회 데이터를 본문 원고에 유기적으로 통합`
+      `[설교 심층 확장] 「${sTitle}」 설교의 5단계 타임라인을 각 챕터로 세분화하여 본문(${sScripture})의 깊이를 극대화`,
+      materials.length > 0
+        ? `[첨부 자료 ${materials.length}종 완전 융합] 업로드된 자료(${materialNames.join(', ')})에서 추출한 핵심 주해·예화·연구 데이터를 모든 장과 심화 챕터에 직접 반영`
         : `[원어 & 적용 통합] 성경 원어의 신학적 배경 해설과 현대 성도의 일상 밀착형 실천 가이드를 동시에 수록`,
-      `[${writingStyle} 맞춤 윤문] 강단 구어체의 추임새를 제거하고 독자의 내면을 두드리는 출판 전문 문체로 정밀 교정`,
+      `[${writingStyle} 맞춤 윤문] 강단 구어체의 추임새를 걷어내고 독자의 내면을 두드리는 출판 전문 문체로 정밀 교정`,
     ];
 
-    editorialNote = `[단일 설교 집중 기획 전략] 선택하신 1편의 설교(「${s.meta.sermonTitle}」)가 가진 5개 구간(도입 후크 → 본문 주해 → 감동 예화 → 3대 실천 적용 → 결단 기도)을 각각 독립된 장(Chapter 1~4)으로 확장하고, ${
-      materialNames.length > 0 ? `첨부 자료(${materialNames.join(', ')})를 부록/심화 챕터로 엮어` : '묵상 질문과 기도문을 더해'
-    } 밀도 높은 단행본으로 구성했습니다.`;
+    editorialNote = `[설교 1편 + 자료 ${materials.length}건 통합 전략] 선택하신 설교(「${sTitle}」)의 흐름에 ${
+      materials.length > 0
+        ? `업로드하신 자료(${materialNames.join(', ')})의 실제 추출 텍스트를 챕터 본문과 심화 장에 유기적으로 직조(Weaving)하여`
+        : '깊이 있는 묵상 질문과 기도문을 더해'
+    } 단행본 완성도를 높였습니다.`;
   } else {
-    // 2편 이상 다중 설교 선택 시: 전체 설교를 관통하는 전략적 통합 시리즈 기획!
+    // 2편 이상 다중 설교 선택 + 업로드 자료 통합 전략 기획
     const firstTitle = titles[0] || '은혜의 말씀';
     const lastTitle = titles[titles.length - 1] || '승리의 삶';
-    const firstKeyword = firstTitle.split(' ')[0].replace(/[^가-힣a-zA-Z0-9]/g, '');
-    const lastKeyword = lastTitle.split(' ').slice(-1)[0].replace(/[^가-힣a-zA-Z0-9]/g, '');
+    const firstKeyword = firstTitle.split(' ')[0].replace(/[^가-힣a-zA-Z0-9]/g, '') || '말씀';
+    const lastKeyword = lastTitle.split(' ').slice(-1)[0].replace(/[^가-힣a-zA-Z0-9]/g, '') || '소망';
 
-    mainTitle = `${firstKeyword}에서 ${lastKeyword}까지, 말씀이 이끄는 길`;
-    subTitle = `${scriptures.join(' · ')} 강해로 엮어낸 ${count}편의 영적 회복 오디세이`;
+    mainTitle =
+      materials.length > 0
+        ? `${firstKeyword}에서 ${lastKeyword}까지: ${firstMaterialCleanTitle} 통합 강해`
+        : `${firstKeyword}에서 ${lastKeyword}까지, 말씀이 이끄는 길`;
+
+    subTitle =
+      materials.length > 0
+        ? `${count}편의 연속 설교(${scriptures.join(' · ')})와 ${materials.length}종의 목회 연구 자료로 완성한 ${bookType}`
+        : `${scriptures.join(' · ')} 강해로 엮어낸 ${count}편의 영적 회복 오디세이`;
+
     alternativeTitles = [
       `광야 같은 세상에서 붙잡은 ${count}가지 하나님의 약속 (${scriptures[0]} 외)`,
-      `「${titles[0]}」에서 「${titles[1] || lastTitle}」로 이어지는 은혜의 여정`,
-      `${authorName}의 ${bookType} 특강: 흔들리지 않는 성도의 삶`,
+      materials.length > 0
+        ? `${firstMaterialCleanTitle}: ${titles[0]} 외 ${count - 1}편 통합 단행본`
+        : `「${titles[0]}」에서 「${titles[1] || lastTitle}」로 이어지는 은혜의 여정`,
+      `${authorName}의 ${bookType}: 흔들리지 않는 성도의 삶`,
     ];
 
     const sermonFlowSummary = targetSermons
-      .map(
-        (s, idx) =>
-          `[제${idx + 1}부: 「${s.meta.sermonTitle}」(${s.meta.scriptureRef})]`
-      )
+      .map((s, idx) => `제${idx + 1}부 「${s.meta.sermonTitle}」(${s.meta.scriptureRef})`)
       .join(' → ');
 
-    publishingIntent = `[다중 설교(${count}편) 통합 전략 기획] 본 도서는 단편 설교의 단순 모음집이 아닙니다. ${churchName} ${authorName}가 선포한 ${count}편의 설교(${sermonFlowSummary})를 하나의 거대한 신앙 성장 서사(Narrative Arc)로 재설계하였습니다. 첫 설교 「${titles[0]}」에서 성도의 실존적 질문을 열고, 이어지는 설교(${titles.slice(1).join(', ')})를 통해 성경적 해답과 삶의 변혁으로 나아가며${
-      materialNames.length > 0
-        ? `, 업로드된 ${materialNames.length}건의 심화 자료(${materialNames.join(', ')})를 각 부의 신학적 뼈대로 결합하여`
+    publishingIntent = `[다중 설교(${count}편) + 참고자료(${materials.length}건) 통합 전략 기획] 본 도서는 ${churchName} ${authorName}가 선포한 ${count}편의 설교(${sermonFlowSummary})를 하나의 일관된 구속사적 서사로 재설계하고${
+      materials.length > 0
+        ? `, 여기에 업로드된 ${materials.length}건의 실제 연구 문서 — ${materialSummaries.join(', ')} — 의 신학적·목회적 핵심 내용을 각 부(Part)와 심화 챕터에 직접 결합하여`
         : ''
-    } 독자가 책을 읽는 동안 단계적인 영적 성숙을 경험하도록 전략적으로 기획되었습니다.`;
+    } 독자가 책을 읽는 동안 입체적인 말씀의 깊이와 삶의 변화를 경험하도록 기획되었습니다.`;
 
     const uniqueAudiences = Array.from(
       new Set(targetSermons.map((s) => s.meta.targetAudience).filter(Boolean))
     );
     targetReaders =
       uniqueAudiences.length > 0
-        ? uniqueAudiences.map((aud, i) => `${i + 1}. ${aud}`).join('\n') +
-          `\n${uniqueAudiences.length + 1}. ${scriptures.join(', ')} 말씀을 종합적으로 묵상하며 양육 교재로 활용하려는 목회자 및 소그룹 리더`
-        : `1. 삶의 고난과 변화의 기로에서 성경적 해답을 찾는 성도\n2. ${scriptures.join(', ')} 본문을 통해 신앙의 기초부터 성숙까지 체계적으로 세우려는 성도`;
+        ? uniqueAudiences.slice(0, 3).map((aud, i) => `${i + 1}. ${aud}`).join('\n') +
+          `\n${Math.min(uniqueAudiences.length, 3) + 1}. ${scriptures.join(', ')} 말씀${
+            materials.length > 0 ? `과 첨부 연구자료(${materialNames.join(', ')})` : ''
+          }를 통합 교재로 활용하려는 목회자 및 소그룹 리더`
+        : `1. 삶의 고난과 변화의 기로에서 성경적 해답을 찾는 성도\n2. ${scriptures.join(', ')} 본문을 체계적으로 묵상하려는 성도`;
 
     differentiationPoints = [
-      `[${count}편 설교의 입체적 스토리텔링] ${titles.map((t) => `「${t}」`).join(' + ')} 설교를 '질문 → 주해 → 회복 → 파송'의 기승전결 구조로 통합 편성`,
-      `[다중 성경 본문 교차 강해] ${scriptures.join(' / ')} 본문을 상호 연결하여 구속사적 통전성 확보`,
-      materialNames.length > 0
-        ? `[설교 영상 + ${materialNames.length}종 문서 자료 결합] 설교의 현장감과 문서 자료(${materialNames.join(', ')})의 체계적 지식을 결합한 하이브리드 ${bookType}`
-        : `[소그룹 & 개인 묵상 완벽 대응] 각 설교에서 도출된 핵심 적용점과 나눔 질문을 챕터별 워크북 형태로 수록`,
+      `[${count}편 설교 전편 반영] ${titles.map((t) => `「${t}」`).join(' + ')} 설교를 누락 없이 제1부~제${count}부의 기승전결 구조로 편성`,
+      materials.length > 0
+        ? `[업로드 자료 ${materials.length}종 실제 본문 통합] ${materialNames.join(', ')}에서 추출한 핵심 문장과 주해 포인트를 설교 원고 내부와 특별 심화 장에 직접 수록`
+        : `[다중 성경 본문 교차 강해] ${scriptures.join(' / ')} 본문을 상호 연결하여 구속사적 통전성 확보`,
+      `[출판 문체(${writingStyle}) 일관 윤문] 여러 주일에 걸쳐 선포된 설교들과 문서 자료의 문체를 한 권의 매끄러운 출판 원고 톤으로 통일`,
     ];
 
-    editorialNote = `[다중 설교(${count}편) 전략 편성 가이드] 선택하신 ${count}편의 설교가 서로 중복되지 않고 시너지를 내도록, 각 설교의 핵심 명제(Big Idea)와 타임라인을 분석하여 총 ${count}부(Part) 체제로 배치했습니다. 구어체 설교를 '${writingStyle}'로 통일감 있게 윤문하여 한 권의 처음부터 끝까지 매끄럽게 읽히도록 구성했습니다.`;
+    editorialNote = `[통합 편성 가이드] 선택된 ${count}편의 설교 영상과 ${materials.length}건의 업로드 자료를 모두 교차 분석하여 총 ${
+      count * 2 + materials.length
+    }개 챕터로 구성했습니다. 각 설교의 현장감 있는 메시지에 업로드 자료의 깊이 있는 텍스트가 자연스럽게 녹아들도록 윤문했습니다.`;
   }
 
-  // 2. 선택된 설교 수(1개 vs 여러 개) 및 업로드 자료에 맞춘 전략적 챕터(Chapters) 및 초안 생성
+  // 챕터 구성 생성
   const generatedChapters: BookChapterDraft[] = [];
 
-  if (count === 1) {
-    // 1편 선택 시: 해당 설교의 타임라인 구간들을 심층 챕터(4개 장)로 세분화 확장
+  if (count <= 1 && targetSermons[0]) {
     const s = targetSermons[0];
     const tl = s.timeline || [];
     const introItem = tl[0];
@@ -169,8 +205,9 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
     const illustItem = tl[2] || tl[1] || tl[0];
     const applyItem = tl[3] || tl[tl.length - 1];
     const prayerItem = tl[4] || tl[tl.length - 1];
+    const mat0 = materials[0];
 
-    // Chapter 1: 도입 & 문제제기
+    // Chapter 1: 도입 & 문제제기 (+ 첫 자료 핵심 배경 반영)
     generatedChapters.push({
       chapterNum: 1,
       partTitle: `제1부 | 삶의 질문 앞에서 (${s.meta.sermonTitle})`,
@@ -186,12 +223,16 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
       subSections: [
         `1. ${s.meta.targetAudience}이 마주한 솔직한 한숨`,
         `2. ${s.meta.scriptureRef} 말씀이 던지는 거룩한 질문`,
-        `3. 흔들리는 감정 너머에 있는 언약의 반석`,
+        mat0
+          ? `3. 참고자료(${mat0.fileName})가 비추는 목회적 배경`
+          : `3. 흔들리는 감정 너머에 있는 언약의 반석`,
       ],
       manuscriptDraft: formatByStyle(writingStyle, [
         `살다 보면 누구나 예상치 못한 인생의 밤을 마주하곤 합니다. ${s.meta.targetAudience}의 자리에서 우리는 종종 "주님, 지금 어디에 계십니까?"라고 조용히 되묻게 됩니다.`,
         `${introItem?.quote ? `"${introItem.quote}"\n` : ''}설교 「${s.meta.sermonTitle}」이 선포하는 첫 번째 메시지는 바로 그 아픔의 자리를 외면하지 않으시는 하나님의 시선입니다. ${s.summary}`,
-        `성경 ${s.meta.scriptureRef}은 우리의 연약함과 두려움을 정죄하지 않습니다. 오히려 우리의 힘으로 어찌할 수 없는 바로 그 지점에서 하나님의 신실하신 구원 섭리가 어떻게 시작되는지를 선명하게 보여줍니다. 이제 그 말씀의 깊은 우물 속으로 함께 걸어가 보려 합니다.`,
+        mat0
+          ? `특별히 함께 연구된 자료 『${mat0.fileName}』에서는 이러한 시대적·영적 정황을 다음과 같이 짚어 줍니다.\n"${getMaterialKeyExcerpt(mat0, 260)}"`
+          : `성경 ${s.meta.scriptureRef}은 우리의 연약함과 두려움을 정죄하지 않고, 오히려 그 지점에서 하나님의 신실하신 구원 섭리가 어떻게 시작되는지를 선명하게 보여줍니다.`,
       ]),
       reflectionQuestions: [
         s.smallGroupQuestions?.[0]?.question ||
@@ -199,11 +240,12 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
         `내 감정과 상황보다 앞서 신뢰해야 할 ${s.meta.scriptureRef}의 약속은 무엇입니까?`,
       ],
       closingPrayer: `사랑의 주님, 우리의 연약한 한숨을 아시고 ${s.meta.scriptureRef} 말씀으로 찾아와 주시니 감사합니다. 세상의 소음 대신 주님의 세미한 음성에 귀 기울이게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.`,
-      wordCount: 720,
+      wordCount: 780,
     });
 
     // Chapter 2: 본문 심층 강해
     const verseInfo = s.scriptureVerses?.[0];
+    const matForExegesis = materials[1] || materials[0];
     generatedChapters.push({
       chapterNum: 2,
       partTitle: `제1부 | 삶의 질문 앞에서 (${s.meta.sermonTitle})`,
@@ -211,7 +253,7 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
         ? exegesisItem.title.replace(/^본문.*?:\s*/, '')
         : `${s.meta.scriptureRef} 본문 속에 담긴 하나님의 설계도`,
       subtitle: verseInfo?.greekOrHebrewKeyword
-        ? `원어(${verseInfo.greekOrHebrewKeyword})로 풀어보는 말씀의 본질`
+        ? `원어(${verseInfo.greekOrHebrewKeyword})와 주해 자료로 풀어보는 말씀의 본질`
         : `${s.meta.scriptureRef}의 신학적 문맥과 구속사적 은혜`,
       scriptureFocus: s.meta.scriptureRef,
       coreMessage:
@@ -223,7 +265,9 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
         verseInfo?.greekOrHebrewKeyword
           ? `2. 원어 '${verseInfo.greekOrHebrewKeyword}'가 품은 깊은 의미`
           : `2. 본문 핵심 구절이 선포하는 복음의 능력`,
-        `3. 오늘 우리의 삶을 다시 해석하는 성경적 렌즈`,
+        matForExegesis
+          ? `3. 『${matForExegesis.fileName}』 심화 주해 연결`
+          : `3. 오늘 우리의 삶을 다시 해석하는 성경적 렌즈`,
       ],
       manuscriptDraft: formatByStyle(writingStyle, [
         `성경 본문 ${s.meta.scriptureRef}을 천천히 읽어 내려가다 보면, 그 행간에 흐르는 하나님의 뜨거운 마음을 만나게 됩니다.${
@@ -231,17 +275,19 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
         }`,
         `${exegesisItem?.summary || ''} ${
           verseInfo?.originalMeaning
-            ? `특별히 본문의 원어적 의미를 살펴보면 '${verseInfo.originalMeaning}'라는 뜻이 담겨 있습니다. ${verseInfo.pastoralPoint || ''}`
+            ? `본문의 원어적 의미를 살펴보면 '${verseInfo.originalMeaning}'라는 뜻이 담겨 있습니다. ${verseInfo.pastoralPoint || ''}`
             : ''
         }`,
-        `${exegesisItem?.quote ? `"${exegesisItem.quote}"\n` : ''}결국 「${s.meta.sermonTitle}」이 우리에게 일깨워 주는 진리는 분명합니다. 내 삶의 주도권을 내가 쥐고 씨름할 때는 두려움이 떠나지 않지만, 말씀의 주인이신 하나님께 시선을 고정할 때 비로소 참된 평안과 길이 열리기 시작합니다.`,
+        matForExegesis
+          ? `여기에 목회 연구 자료 『${matForExegesis.fileName}』의 분석을 더하면 본문의 입체감이 한층 또렷해집니다.\n"${getMaterialKeyExcerpt(matForExegesis, 260)}"\n이처럼 말씀의 주인이신 하나님께 시선을 고정할 때 비로소 참된 평안과 길이 열리기 시작합니다.`
+          : `${exegesisItem?.quote ? `"${exegesisItem.quote}"\n` : ''}내 삶의 주도권을 말씀의 주인이신 하나님께 내어드릴 때 비로소 참된 평안과 길이 열리기 시작합니다.`,
       ]),
       reflectionQuestions: [
         `${s.meta.scriptureRef} 본문 중에서 오늘 내 마음에 가장 새롭게 다가온 단어는 무엇입니까?`,
         `내 삶을 바라보던 시선을 하나님의 관점으로 바꿀 때 무엇이 달라집니까?`,
       ],
       closingPrayer: `말씀의 주인이신 하나님, ${s.meta.scriptureRef}의 진리가 지식이 아니라 내 삶을 지탱하는 생명의 능력이 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.`,
-      wordCount: 790,
+      wordCount: 830,
     });
 
     // Chapter 3: 예화 & 삶의 적용
@@ -281,37 +327,36 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
       wordCount: 760,
     });
 
-    // 만약 업로드된 자료(PDF/PPT)가 있다면 Chapter 4로 자료 심화 통합 챕터 구성
-    if (materials.length > 0) {
+    // 업로드된 각 참고자료(PDF/PPT/DOCX/TXT)마다 전용 심화 챕터를 생성하여 빠짐없이 수록!
+    materials.forEach((mat, mIdx) => {
+      const cleanMatName = mat.fileName.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' ');
       generatedChapters.push({
-        chapterNum: 4,
-        partTitle: `제2부 | 말씀으로 살아내는 일상`,
-        chapterTitle: `심화 묵상: ${materials[0].fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ')}`,
-        subtitle: `목회 연구 자료와 함께 읽는 「${s.meta.sermonTitle}」 실천 가이드`,
+        chapterNum: 4 + mIdx,
+        partTitle: `제3부 | 첨부 연구자료 심화 강해 & 워크북`,
+        chapterTitle: `${cleanMatName}`,
+        subtitle: `[${mat.fileType.toUpperCase()} 자료 기반 집필] 「${s.meta.sermonTitle}」과 함께 읽는 심화 통찰`,
         scriptureFocus: s.meta.scriptureRef,
-        coreMessage: materials.map((m) => m.summaryPoint).join(' / '),
-        subSections: materials.map(
-          (m, idx) => `${idx + 1}. [${m.fileType.toUpperCase()}] ${m.fileName} 핵심 통찰`
-        ),
+        coreMessage: mat.summaryPoint || `${cleanMatName} 자료의 핵심 신학 및 목회 실천 정리`,
+        subSections: [
+          `1. 『${cleanMatName}』 핵심 문제의식과 배경`,
+          `2. 자료 본문에서 도출한 성경적·신학적 통찰`,
+          `3. 설교 「${s.meta.sermonTitle}」과의 통합 적용점`,
+        ],
         manuscriptDraft: formatByStyle(writingStyle, [
-          `「${s.meta.sermonTitle}」의 메시지를 더욱 깊이 있게 삶에 뿌리내리기 위해, 함께 연구된 목회 자료(${materials
-            .map((m) => m.fileName)
-            .join(', ')})의 핵심 통찰을 정리합니다.`,
-          ...materials.map(
-            (m) => `■ ${m.fileName}\n${m.extractedText}\n(핵심 요약: ${m.summaryPoint})`
-          ),
-          `이처럼 강단에서 선포된 말씀과 체계적인 성경 연구가 만날 때, 우리의 신앙은 흔들리지 않는 뿌리를 내리게 됩니다.`,
+          `강단에서 선포된 「${s.meta.sermonTitle}」(${s.meta.scriptureRef})의 메시지를 더욱 깊이 있게 뿌리내리기 위해, 함께 준비된 연구 자료 『${mat.fileName}』의 핵심 내용을 출판 원고로 풀어냅니다.`,
+          `${mat.extractedText}`,
+          `위의 자료가 강조하는 핵심 요지("${mat.summaryPoint || cleanMatName}")는 결국 ${s.meta.scriptureRef} 말씀이 오늘 우리의 삶 한복판에서 어떻게 구체적인 열매로 이어져야 하는지를 선명하게 보여 줍니다.`,
         ]),
         reflectionQuestions: [
-          `심화 자료를 통해 새롭게 깨닫게 된 신앙적 통찰은 무엇입니까?`,
-          `우리 공동체와 가정이 함께 붙잡아야 할 기도 제목을 적어 보십시오.`,
+          `『${cleanMatName}』 자료의 내용 중 내 신앙을 가장 깊이 돌아보게 한 대목은 무엇입니까?`,
+          `설교 말씀과 이 자료의 가르침을 이번 주 우리 가정과 일터에 어떻게 적용하시겠습니까?`,
         ],
-        closingPrayer: `진리의 성령님, 말씀을 더욱 깊이 알고 깨닫게 하시니 감사합니다. 우리의 지성과 영성이 함께 자라나 그리스도의 장성한 분량에 이르게 하옵소서. 아멘.`,
-        wordCount: 740,
+        closingPrayer: `진리의 성령님, 강단의 말씀과 『${cleanMatName}』의 깊은 묵상을 통해 우리의 지성과 영성이 함께 자라나게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.`,
+        wordCount: Math.max(700, (mat.extractedText || '').length + 320),
       });
-    }
+    });
   } else {
-    // 2편 이상 다중 설교 선택 시: 선택된 모든 설교(1~N편)를 각각 전략적 Part & Chapter로 빠짐없이 편성!
+    // 2편 이상 다중 설교 선택 시: 모든 선택 설교(1~N편) + 업로드된 모든 자료를 빠짐없이 전략 편성!
     let chapCounter = 1;
 
     targetSermons.forEach((s, sIdx) => {
@@ -323,8 +368,9 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
       const applyTl = tl[3] || tl[tl.length - 1];
       const prayerTl = tl[4] || tl[tl.length - 1];
       const verse0 = s.scriptureVerses?.[0];
+      const pairedMaterial = materials.length > 0 ? materials[sIdx % materials.length] : undefined;
 
-      // 각 설교마다 [장 A: 말씀의 빛 (도입 & 본문 강해)] 생성
+      // 각 설교별 [장 A: 도입 & 본문 심층 강해 + 매칭된 참고자료 통찰]
       generatedChapters.push({
         chapterNum: chapCounter++,
         partTitle: partLabel,
@@ -339,33 +385,41 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
         subSections: [
           `1. ${introTl?.title || '현실의 자리에서 마주하는 영적 질문'}`,
           `2. ${exegesisTl?.title || `${s.meta.scriptureRef} 핵심 본문 주해`}`,
-          `3. ${s.keyStrengths?.[0] || '본문이 선포하는 하나님의 약속'}`,
+          pairedMaterial
+            ? `3. 참고자료 『${pairedMaterial.fileName}』 연계 통찰`
+            : `3. ${s.keyStrengths?.[0] || '본문이 선포하는 하나님의 약속'}`,
         ],
         manuscriptDraft: formatByStyle(writingStyle, [
           `[설교 ${sIdx + 1}: 「${s.meta.sermonTitle}」 (${s.meta.scriptureRef} / ${s.meta.date}) 기반 집필]\n\n${
             introTl?.summary || ''
-          } ${s.meta.targetAudience}의 걸음 속에서 우리는 종종 멈추어 서서 묻게 됩니다. 그때 주님께서는 ${
+          } ${s.meta.targetAudience}의 걸음 속에서 주님께서는 ${
             s.meta.scriptureRef
           } 말씀을 통해 우리에게 분명한 음성을 들려주십니다.`,
-          `${verse0?.koreanText ? `"${verse0.koreanText}" (${s.meta.scriptureRef})\n\n` : ''}${
-            s.summary
-          }`,
+          `${verse0?.koreanText ? `"${verse0.koreanText}" (${s.meta.scriptureRef})\n\n` : ''}${s.summary}`,
           `${exegesisTl?.summary || ''} ${
             verse0?.originalMeaning
-              ? `본문 원어(${verse0.greekOrHebrewKeyword || ''})가 보여주는 의미처럼, '${verse0.originalMeaning}'의 은혜가 오늘 우리의 삶을 붙들고 있습니다.`
+              ? `본문 원어(${verse0.greekOrHebrewKeyword || ''})가 보여주는 '${verse0.originalMeaning}'의 은혜가 오늘 우리의 삶을 붙들고 있습니다.`
               : ''
-          }\n${exegesisTl?.quote ? `"${exegesisTl.quote}"` : ''}`,
+          }`,
+          ...(pairedMaterial
+            ? [
+                `또한 함께 수록된 목회 자료 『${pairedMaterial.fileName}』에서는 이 주제를 더욱 깊이 조명합니다.\n"${getMaterialKeyExcerpt(
+                  pairedMaterial,
+                  240
+                )}"`,
+              ]
+            : []),
         ]),
         reflectionQuestions: [
           s.smallGroupQuestions?.[0]?.question ||
             `「${s.meta.sermonTitle}」(${s.meta.scriptureRef}) 말씀 중 오늘 내게 주시는 하나님의 음성은 무엇입니까?`,
           `${s.meta.scriptureRef}의 약속을 내 삶의 문제에 적용할 때 어떤 소망이 생깁니까?`,
         ],
-        closingPrayer: `주님, 제${sIdx + 1}부 「${s.meta.sermonTitle}」(${s.meta.scriptureRef}) 말씀을 통해 저의 닫힌 시선을 열어 주시니 감사합니다. 주님의 약속 위에 굳게 서게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.`,
-        wordCount: 810,
+        closingPrayer: `주님, 제${sIdx + 1}부 「${s.meta.sermonTitle}」(${s.meta.scriptureRef}) 말씀을 통해 저의 닫힌 시선을 열어 주시니 감사합니다. 예수님의 이름으로 기도드립니다. 아멘.`,
+        wordCount: 840,
       });
 
-      // 각 설교마다 [장 B: 삶의 적용 & 결단 (예화 + 적용 + 기도)] 생성
+      // 각 설교별 [장 B: 삶의 적용 & 다음 설교로의 유기적 브릿지]
       generatedChapters.push({
         chapterNum: chapCounter++,
         partTitle: partLabel,
@@ -395,57 +449,53 @@ export const buildStrategicBookPlan = (input: StrategicBookInput): {
             `${s.meta.scriptureRef} 말씀을 붙잡은 성도는 어제와 같은 방식으로 절망하지 않습니다.`
           } ${
             sIdx < count - 1
-              ? `이 은혜의 결단은 다음 장에서 이어질 「${targetSermons[sIdx + 1].meta.sermonTitle}」(${targetSermons[sIdx + 1].meta.scriptureRef})의 비전으로 더욱 넓게 확장됩니다.`
+              ? `이 은혜의 결단은 다음 부에서 이어질 「${targetSermons[sIdx + 1].meta.sermonTitle}」(${targetSermons[sIdx + 1].meta.scriptureRef})의 비전으로 더욱 넓게 확장됩니다.`
               : `이로써 앞서 나눈 ${count}편의 말씀(${titles.map((t) => `「${t}」`).join(', ')})이 하나의 온전한 순종으로 완성됩니다.`
           }`,
-          `${applyTl?.quote ? `"${applyTl.quote}"\n` : ''}${
-            prayerTl?.summary || ''
-          }\n${prayerTl?.quote ? `"${prayerTl.quote}"` : ''}`,
+          `${applyTl?.quote ? `"${applyTl.quote}"\n` : ''}${prayerTl?.summary || ''}`,
         ]),
         reflectionQuestions: [
           s.smallGroupQuestions?.[1]?.question ||
             `「${s.meta.sermonTitle}」의 가르침 중 이번 주 내가 가정과 일터에서 바로 실천할 한 가지는 무엇입니까?`,
-          s.smallGroupQuestions?.[2]?.question ||
-            `이 말씀을 통해 위로하고 섬겨야 할 내 주변의 이웃은 누구입니까?`,
+          `이 말씀을 통해 위로하고 섬겨야 할 내 주변의 이웃은 누구입니까?`,
         ],
         closingPrayer: `은혜의 아버지 하나님, 「${s.meta.sermonTitle}」 말씀이 나의 입술의 고백과 삶의 열매가 되게 하옵소서. 예수 그리스도의 이름으로 기도드립니다. 아멘.`,
-        wordCount: 780,
+        wordCount: 790,
       });
     });
 
-    // 업로드된 참고자료(PDF/PPT 등)가 있으면 마지막 총결론/부록 챕터로 통합 편성
-    if (materials.length > 0) {
+    // 업로드된 각 참고자료(PDF/PPT/DOCX/TXT)를 개별 심화 챕터로도 완결성 있게 편성!
+    materials.forEach((mat, mIdx) => {
+      const cleanMatName = mat.fileName.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' ');
       generatedChapters.push({
         chapterNum: chapCounter++,
-        partTitle: `에필로그 | ${count}편의 설교와 목회 연구 자료 통합 결론`,
-        chapterTitle: `말씀에서 삶으로: ${materials[0].fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ')} 통합 정리`,
-        subtitle: `${titles.map((t) => `「${t}」`).join(' · ')} 및 부교재 핵심 요약`,
+        partTitle: `특별부록 & 연구통합 | 목회 참고자료 심화편 (${mIdx + 1}/${materials.length})`,
+        chapterTitle: `${cleanMatName} 심화 강해`,
+        subtitle: `[업로드 자료 통합] ${count}편의 설교(${scriptures.join(' · ')})와 함께 읽는 『${mat.fileName}』`,
         scriptureFocus: scriptures.join(' / '),
-        coreMessage: `선포된 ${count}편의 강단 말씀과 목회 연구 자료(${materialNames.join(', ')})를 통해 성도의 전인적 성숙을 완성한다.`,
+        coreMessage:
+          mat.summaryPoint ||
+          `선포된 ${count}편의 강단 말씀과 『${cleanMatName}』 연구 자료를 통합하여 성도의 전인적 성숙을 돕는다.`,
         subSections: [
-          `1. ${count}편 설교(${scriptures.join(', ')})의 핵심 메시지 총정리`,
-          ...materials.map(
-            (m, i) => `${i + 2}. [${m.fileType.toUpperCase()}] ${m.fileName} 핵심 요약`
-          ),
+          `1. 『${cleanMatName}』 핵심 내용 요약 및 신학적 뼈대`,
+          `2. ${count}편의 설교(${titles.slice(0, 2).join(', ')}${count > 2 ? ' 외' : ''})와의 교차 적용`,
+          `3. 성도와 소그룹을 위한 실천 가이드`,
         ],
         manuscriptDraft: formatByStyle(writingStyle, [
-          `지금까지 우리는 ${churchName} ${authorName}가 선포한 ${count}편의 설교 — ${targetSermons
+          `[업로드 참고자료 『${mat.fileName}』 통합 원고]\n지금까지 살펴본 ${count}편의 설교 — ${targetSermons
             .map((s) => `「${s.meta.sermonTitle}」(${s.meta.scriptureRef})`)
-            .join(', ')} — 를 따라 깊은 은혜의 여정을 걸어왔습니다.`,
-          ...materials.map(
-            (m) =>
-              `[참고 문헌 및 목회 자료 통합: ${m.fileName}]\n${m.extractedText}\n• 핵심 통찰: ${m.summaryPoint}`
-          ),
-          `이 모든 말씀과 연구가 가리키는 결론은 하나입니다. 하나님의 말씀은 어제나 오늘이나 영원토록 동일하시며, 그 말씀을 붙들고 세상 속으로 걸어가는 한 사람의 성도를 통해 하나님 나라는 오늘도 확장되고 있습니다.`,
+            .join(', ')} — 를 더욱 풍성하게 이해하기 위해, 저자가 함께 준비한 『${cleanMatName}』의 핵심 내용을 정리합니다.`,
+          `${mat.extractedText}`,
+          `이처럼 강단에서 선포된 생생한 음성 설교와 『${cleanMatName}』의 탄탄한 연구 자료가 만날 때, 독자는 말씀의 감동과 신학적 깊이를 동시에 누리게 됩니다.`,
         ]),
         reflectionQuestions: [
-          `지금까지 함께 읽은 ${count}편의 말씀(${titles.join(', ')}) 중 내 인생의 이정표로 삼고 싶은 한 구절은 무엇입니까?`,
+          `『${cleanMatName}』의 내용과 앞서 읽은 ${count}편의 설교가 만나는 핵심 공통 메시지는 무엇입니까?`,
           `이 책을 덮으며 앞으로 한 달 동안 주님 앞에 드릴 나의 신앙 결단문을 작성해 보십시오.`,
         ],
-        closingPrayer: `알파와 오메가 되시는 주님, ${count}편의 귀한 말씀(${scriptures.join(', ')})을 통해 우리의 영혼을 새롭게 빚어 주시니 감사합니다. 평생토록 말씀의 사람으로 살아가게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.`,
-        wordCount: 840,
+        closingPrayer: `알파와 오메가 되시는 주님, ${count}편의 말씀과 『${cleanMatName}』의 귀한 연구를 통해 우리의 영혼을 새롭게 빚어 주시니 감사합니다. 평생 말씀의 사람으로 살아가게 하옵소서. 아멘.`,
+        wordCount: Math.max(780, (mat.extractedText || '').length + 340),
       });
-    }
+    });
   }
 
   return {

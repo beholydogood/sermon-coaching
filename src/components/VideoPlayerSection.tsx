@@ -1,6 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, RotateCcw, Clock, Youtube, Edit3, Check } from 'lucide-react';
+import { Play, RotateCcw, Clock, Youtube, Edit3, Check, MapPin } from 'lucide-react';
 import { SermonMeta, HomileticTimelineItem } from '../types/sermon';
+
+declare global {
+  interface Window {
+    YT?: any;
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
 
 interface VideoPlayerSectionProps {
   currentTimestamp: number;
@@ -24,6 +31,37 @@ const parseMmSsToSec = (str: string): number => {
   return parseInt(trimmed, 10) || 0;
 };
 
+let ytApiPromise: Promise<void> | null = null;
+function loadYoutubeIframeApi(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  if (window.YT && window.YT.Player) return Promise.resolve();
+  if (ytApiPromise) return ytApiPromise;
+
+  ytApiPromise = new Promise((resolve) => {
+    const existing = document.getElementById('youtube-iframe-js-api');
+    const prevCallback = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (prevCallback) prevCallback();
+      resolve();
+    };
+    if (!existing) {
+      const tag = document.createElement('script');
+      tag.id = 'youtube-iframe-js-api';
+      tag.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(tag);
+    } else {
+      const checkTimer = setInterval(() => {
+        if (window.YT && window.YT.Player) {
+          clearInterval(checkTimer);
+          resolve();
+        }
+      }, 150);
+    }
+  });
+
+  return ytApiPromise;
+}
+
 export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
   currentTimestamp,
   onSeek,
@@ -32,48 +70,128 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
   onUpdateYoutubeId,
   onUpdateStartTime,
 }) => {
-  const [iframeKey, setIframeKey] = useState(0);
+  const [reloadTick, setReloadTick] = useState(0);
   const [isEditingUrl, setIsEditingUrl] = useState(false);
   const [customInputUrl, setCustomInputUrl] = useState('');
 
   const [isEditingStart, setIsEditingStart] = useState(false);
   const [customStartInput, setCustomStartInput] = useState('');
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const ytContainerRef = useRef<HTMLDivElement | null>(null);
+  const ytPlayerRef = useRef<any>(null);
+  const ytReadyRef = useRef<boolean>(false);
+  const hasEnforcedInitialStartRef = useRef<boolean>(false);
+  const targetStartSecRef = useRef<number>(0);
 
-  // 설교 시작 지점(초): meta.startTimeSec 또는 첫 대지(서론) 시작 시점, 없으면 기본 15초(앞부분 인트로 스킵)
+  // 설교 시작 지점(초): meta.startTimeSec 우선, 없으면 첫 타임라인 구간 또는 60초(인트로 스킵)
   const sermonStartSec =
     meta.startTimeSec && meta.startTimeSec > 0
       ? meta.startTimeSec
       : timeline && timeline.length > 0 && timeline[0].seconds > 0
       ? timeline[0].seconds
-      : 15;
+      : 60;
 
-  // 현재 재생할 타깃 시점: 0초일 경우 자동으로 설교 시작 부분(sermonStartSec)으로 지정
+  // 현재 재생 타깃 시점: 0초일 경우 무조건 설교 시작 부분(sermonStartSec)으로 강제 지정
   const effectiveStartSec = Math.floor(
     currentTimestamp > 0 ? currentTimestamp : sermonStartSec
   );
+  targetStartSecRef.current = effectiveStartSec;
 
-  // 유튜브 IFrame Player API postMessage를 통해 설교 시작 지점으로 강제 점프 및 자동 재생
-  const sendYoutubeSeekAndPlay = (targetSec: number) => {
-    const win = iframeRef.current?.contentWindow;
-    if (!win) return;
-    const seekPayload = JSON.stringify({
-      event: 'command',
-      func: 'seekTo',
-      args: [targetSec, true],
-    });
-    const playPayload = JSON.stringify({
-      event: 'command',
-      func: 'playVideo',
-      args: [],
-    });
-    win.postMessage(seekPayload, '*');
-    win.postMessage(playPayload, '*');
-  };
+  const activeVideoId = meta.youtubeId;
 
-  // 로컬 비디오 파일(<video>) 및 유튜브(<iframe>) 모두 설교 시작 지점으로 자동 이동 및 재생
+  // 1. 유튜브 공식 IFrame Player API 인스턴스 생성 및 설교 시작점 강제 점프 제어
+  useEffect(() => {
+    if (meta.videoSourceType === 'file') return;
+    if (!activeVideoId) return;
+
+    let cancelled = false;
+    hasEnforcedInitialStartRef.current = false;
+    ytReadyRef.current = false;
+
+    loadYoutubeIframeApi().then(() => {
+      if (cancelled || !ytContainerRef.current || !window.YT?.Player) return;
+
+      // 기존 플레이어 정리
+      if (ytPlayerRef.current && typeof ytPlayerRef.current.destroy === 'function') {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch {
+          // ignore
+        }
+        ytPlayerRef.current = null;
+      }
+
+      ytContainerRef.current.innerHTML = '';
+      const mountEl = document.createElement('div');
+      ytContainerRef.current.appendChild(mountEl);
+
+      const initialSec = targetStartSecRef.current;
+
+      ytPlayerRef.current = new window.YT.Player(mountEl, {
+        width: '100%',
+        height: '100%',
+        videoId: activeVideoId,
+        playerVars: {
+          start: initialSec,
+          autoplay: 1,
+          rel: 0,
+          modestbranding: 1,
+          playsinline: 1,
+          enablejsapi: 1,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: (event: any) => {
+            if (cancelled) return;
+            ytReadyRef.current = true;
+            const sec = targetStartSecRef.current;
+            if (sec > 0) {
+              try {
+                event.target.seekTo(sec, true);
+                event.target.playVideo();
+              } catch {
+                // ignore
+              }
+            }
+          },
+          onStateChange: (event: any) => {
+            if (cancelled) return;
+            // YT.PlayerState.PLAYING === 1
+            // 브라우저 자동재생 정책 등으로 인해 사용자가 빨간 재생 버튼을 눌러 0:00부터 시작하려는 순간에도
+            // 즉시 설교 시작 시점(targetStartSecRef.current)으로 강제 이동시킵니다!
+            if (event.data === 1 && !hasEnforcedInitialStartRef.current) {
+              hasEnforcedInitialStartRef.current = true;
+              const desiredSec = targetStartSecRef.current;
+              try {
+                const cur = event.target.getCurrentTime?.() || 0;
+                if (desiredSec > 3 && cur < desiredSec - 3) {
+                  event.target.seekTo(desiredSec, true);
+                }
+              } catch {
+                // ignore
+              }
+            }
+          },
+        },
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (ytPlayerRef.current && typeof ytPlayerRef.current.destroy === 'function') {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch {
+          // ignore
+        }
+        ytPlayerRef.current = null;
+      }
+    };
+  }, [activeVideoId, meta.id, meta.videoSourceType, reloadTick]);
+
+  // 2. 재생 중 타임라인/습관 구간 클릭 또는 설교 시작점 변경 시 부드러운 즉시 이동(seekTo)
   useEffect(() => {
     if (meta.videoSourceType === 'file' && videoRef.current) {
       const vid = videoRef.current;
@@ -81,25 +199,42 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
         vid.currentTime = effectiveStartSec;
       }
       vid.play().catch(() => {});
-    } else if (iframeRef.current) {
-      sendYoutubeSeekAndPlay(effectiveStartSec);
-      const timer1 = setTimeout(() => sendYoutubeSeekAndPlay(effectiveStartSec), 600);
-      const timer2 = setTimeout(() => sendYoutubeSeekAndPlay(effectiveStartSec), 1400);
-      return () => {
-        clearTimeout(timer1);
-        clearTimeout(timer2);
-      };
+    } else if (ytPlayerRef.current && ytReadyRef.current) {
+      try {
+        const cur = ytPlayerRef.current.getCurrentTime?.() || 0;
+        if (Math.abs(cur - effectiveStartSec) > 2) {
+          ytPlayerRef.current.seekTo(effectiveStartSec, true);
+          ytPlayerRef.current.playVideo?.();
+        }
+      } catch {
+        // ignore
+      }
     }
-  }, [effectiveStartSec, meta.id, meta.videoFileUrl, meta.videoSourceType, iframeKey]);
+  }, [effectiveStartSec, meta.videoSourceType]);
+
+  const showTempNotice = (msg: string) => {
+    setSavedNotice(msg);
+    setTimeout(() => setSavedNotice(null), 3500);
+  };
 
   const handleJump = (sec: number) => {
+    targetStartSecRef.current = sec;
+    hasEnforcedInitialStartRef.current = false;
     onSeek(sec);
+
     if (meta.videoSourceType === 'file' && videoRef.current) {
       videoRef.current.currentTime = sec;
       videoRef.current.play().catch(() => {});
+    } else if (ytPlayerRef.current && ytReadyRef.current) {
+      try {
+        ytPlayerRef.current.seekTo(sec, true);
+        ytPlayerRef.current.playVideo?.();
+        hasEnforcedInitialStartRef.current = true;
+      } catch {
+        setReloadTick((prev) => prev + 1);
+      }
     } else {
-      sendYoutubeSeekAndPlay(sec);
-      setIframeKey((prev) => prev + 1);
+      setReloadTick((prev) => prev + 1);
     }
   };
 
@@ -108,11 +243,37 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
       onUpdateStartTime(sec);
     }
     handleJump(sec);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    showTempNotice(`설교 시작점이 ${String(m).padStart(2, '0')}분 ${String(s).padStart(2, '0')}초로 저장되었습니다.`);
+  };
+
+  // 현재 재생 중인 화면의 위치(초)를 그대로 설교 시작점으로 저장!
+  const handleCaptureCurrentPositionAsStart = () => {
+    let curSec = 0;
+    if (meta.videoSourceType === 'file' && videoRef.current) {
+      curSec = Math.floor(videoRef.current.currentTime || 0);
+    } else if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+      curSec = Math.floor(ytPlayerRef.current.getCurrentTime() || 0);
+    }
+
+    if (curSec <= 0) {
+      showTempNotice('영상을 재생하거나 원하는 설교 시작 위치로 이동한 뒤 눌러주세요.');
+      return;
+    }
+
+    if (onUpdateStartTime) {
+      onUpdateStartTime(curSec);
+    }
+    onSeek(curSec);
+    const m = Math.floor(curSec / 60);
+    const s = curSec % 60;
+    showTempNotice(`현재 위치(${String(m).padStart(2, '0')}분 ${String(s).padStart(2, '0')}초)가 설교 시작점으로 고정되었습니다!`);
   };
 
   const handleApplyUrl = async () => {
     if (!customInputUrl.trim()) return;
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|live\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/;
     const match = customInputUrl.match(regExp);
     const videoId = match && match[2].length === 11 ? match[2] : customInputUrl.trim();
 
@@ -128,14 +289,14 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
         if (data.success && typeof data.detectedStartSec === 'number') {
           detectedStartSec = data.detectedStartSec;
         }
-      } catch (e) {
+      } catch {
         // ignore
       }
 
       onUpdateYoutubeId(videoId, detectedStartSec);
       setIsEditingUrl(false);
       setCustomInputUrl('');
-      setIframeKey((prev) => prev + 1);
+      setReloadTick((prev) => prev + 1);
     }
   };
 
@@ -153,9 +314,11 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
     }
     handleJump(sec);
     setIsEditingStart(false);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    showTempNotice(`설교 시작점이 ${String(m).padStart(2, '0')}분 ${String(s).padStart(2, '0')}초로 변경되었습니다.`);
   };
 
-  const activeVideoId = meta.youtubeId;
   const startMin = Math.floor(sermonStartSec / 60);
   const startRemSec = sermonStartSec % 60;
   const displayStartLabel = `${String(startMin).padStart(2, '0')}분 ${String(startRemSec).padStart(2, '0')}초`;
@@ -169,25 +332,27 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
           <span className="text-sm font-bold text-white tracking-wide">
             설교 영상 플레이어
           </span>
-          <span className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-0.5 rounded-full font-mono font-medium">
-            설교 시작: {displayStartLabel} ~ 자동 재생
+          <span className="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-full font-mono font-bold">
+            설교 시작점: {displayStartLabel} ~ 자동 점프 재생
           </span>
         </div>
 
         <div className="flex items-center space-x-2 flex-wrap gap-y-1">
           {onUpdateStartTime && (
             <button
-              onClick={handleOpenStartEditor}
-              className="text-xs text-slate-300 hover:text-white flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 border border-slate-700 transition-colors cursor-pointer"
-              title="설교 시작 시간(분:초) 직접 지정"
+              type="button"
+              onClick={handleCaptureCurrentPositionAsStart}
+              className="text-xs text-emerald-300 hover:text-emerald-200 flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 transition-colors cursor-pointer font-semibold"
+              title="영상 바를 원하는 설교 시작 위치에 놓고 누르면 그 위치가 시작점으로 영구 저장됩니다"
             >
-              <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span>설교 시작점 설정</span>
+              <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+              <span>현재 재생 위치를 시작점으로 고정</span>
             </button>
           )}
 
           {onUpdateYoutubeId && (
             <button
+              type="button"
               onClick={() => setIsEditingUrl(!isEditingUrl)}
               className="text-xs text-slate-400 hover:text-white flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 border border-slate-700 transition-colors cursor-pointer"
               title="설교 유튜브 영상 링크 변경"
@@ -198,8 +363,9 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
           )}
 
           <button
+            type="button"
             onClick={() => handleJump(sermonStartSec)}
-            className="text-xs text-amber-300 hover:text-amber-200 flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-colors cursor-pointer"
+            className="text-xs text-amber-300 hover:text-amber-200 flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 transition-colors cursor-pointer font-bold"
             title="설교 시작 시점부터 즉시 다시 재생"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -208,20 +374,29 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
         </div>
       </div>
 
-      {/* 설교 시작점 1클릭 빠른 이동 & 고정 바 (예배 전체 영상에서 찬양/기도 건너뛰기용) */}
+      {/* 알림 토스트 */}
+      {savedNotice && (
+        <div className="mb-3 px-3 py-2 rounded-xl bg-emerald-950/70 border border-emerald-500/40 text-xs text-emerald-200 font-semibold flex items-center gap-2 animate-in fade-in">
+          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{savedNotice}</span>
+        </div>
+      )}
+
+      {/* 설교 시작점 1클릭 빠른 이동 & 고정 바 */}
       <div className="mb-3 px-3 py-2 bg-slate-950/70 rounded-xl border border-slate-800 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1 mr-1">
             <Clock className="w-3.5 h-3.5" />
-            <span>설교 시작점 즉시 지정:</span>
+            <span>예배 앞부분 건너뛰기(시작점 변경):</span>
           </span>
           {[
-            { label: '00:15 (단편설교)', sec: 15 },
-            { label: '05:00', sec: 300 },
-            { label: '15:00', sec: 900 },
-            { label: '20:00 (예배실황)', sec: 1200 },
-            { label: '25:00', sec: 1500 },
+            { label: '01:00', sec: 60 },
+            { label: '03:00', sec: 180 },
+            { label: '10:00', sec: 600 },
+            { label: '18:00', sec: 1080 },
+            { label: '25:00 (예배실황)', sec: 1500 },
             { label: '30:00', sec: 1800 },
+            { label: '35:00', sec: 2100 },
           ].map((preset) => {
             const isCurrent = Math.abs(sermonStartSec - preset.sec) < 5;
             return (
@@ -251,24 +426,26 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
 
       {/* 설교 시작 시간 변경 인라인 폼 */}
       {isEditingStart && (
-        <div className="mb-3 p-3 bg-slate-850 rounded-xl border border-amber-500/30 flex items-center space-x-2 animate-in fade-in">
+        <div className="mb-3 p-3 bg-slate-850 rounded-xl border border-amber-500/30 flex items-center space-x-2 animate-in fade-in flex-wrap gap-y-2">
           <Clock className="w-4 h-4 text-amber-400 shrink-0" />
           <span className="text-xs text-slate-300 font-semibold whitespace-nowrap">
-            설교 본문 시작 시간:
+            설교 본문 시작 시간(분:초):
           </span>
           <input
             type="text"
             value={customStartInput}
             onChange={(e) => setCustomStartInput(e.target.value)}
-            placeholder="예: 25:10 또는 00:15"
+            placeholder="예: 24:30 또는 02:00"
             className="w-36 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono placeholder-slate-500 focus:outline-hidden focus:border-amber-400"
           />
           <button
+            type="button"
             onClick={handleApplyStartTime}
-            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold flex items-center space-x-1 cursor-pointer"
+            style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
+            className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg text-xs font-extrabold flex items-center space-x-1 cursor-pointer"
           >
             <Check className="w-3.5 h-3.5" />
-            <span>시작점 저장 &amp; 재생</span>
+            <span>시작점 저장 &amp; 즉시 점프</span>
           </button>
         </div>
       )}
@@ -281,10 +458,11 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
             type="text"
             value={customInputUrl}
             onChange={(e) => setCustomInputUrl(e.target.value)}
-            placeholder="새 유튜브 설교 영상 주소를 입력하세요 (설교 시작 시간 자동 감지)..."
+            placeholder="새 유튜브 설교 영상 주소를 입력하세요 (챕터·설명란 설교 시작 시간 자동 감지)..."
             className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-indigo-400"
           />
           <button
+            type="button"
             onClick={handleApplyUrl}
             className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 cursor-pointer"
           >
@@ -294,12 +472,12 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
         </div>
       )}
 
-      {/* 16:9 반응형 비디오 플레이어 (유튜브 및 로컬 영상 파일 모두 설교 시작 지점부터 자동 재생) */}
+      {/* 16:9 반응형 비디오 플레이어 (YT.Player API 제어로 00:00 재생을 원천 차단하고 설교 시작점으로 점프) */}
       <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 shadow-inner">
         {meta.videoSourceType === 'file' && meta.videoFileUrl ? (
           <video
             ref={videoRef}
-            key={`${meta.videoFileUrl}-${iframeKey}`}
+            key={`${meta.videoFileUrl}-${reloadTick}`}
             src={`${meta.videoFileUrl}#t=${effectiveStartSec}`}
             controls
             autoPlay
@@ -313,62 +491,39 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
             }}
             onPlay={(e) => {
               const video = e.currentTarget;
-              // 처음 0초 근처에서 재생 버튼을 누른 경우 자동으로 설교 시작 부분으로 점프
-              if (video.currentTime < 2 && sermonStartSec > 2) {
+              if (video.currentTime < 3 && sermonStartSec > 3) {
                 video.currentTime = sermonStartSec;
               }
             }}
           />
         ) : (
-          <iframe
-            ref={iframeRef}
-            key={`${activeVideoId}-${effectiveStartSec}-${iframeKey}`}
-            src={`https://www.youtube.com/embed/${activeVideoId}?start=${effectiveStartSec}&autoplay=1&enablejsapi=1&rel=0&modestbranding=1`}
-            title={meta.sermonTitle}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-            onLoad={() => {
-              sendYoutubeSeekAndPlay(effectiveStartSec);
-              setTimeout(() => sendYoutubeSeekAndPlay(effectiveStartSec), 500);
-            }}
-            className="absolute inset-0 w-full h-full border-0"
+          <div
+            ref={ytContainerRef}
+            className="absolute inset-0 w-full h-full [&>iframe]:w-full [&>iframe]:h-full [&>iframe]:border-0"
           />
         )}
       </div>
 
-      {/* 대지별 퀵 점프 칩 바 */}
-      <div className="mt-3.5 pt-3 border-t border-slate-800">
-        <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-          <span className="flex items-center space-x-1.5 font-semibold text-slate-300">
-            <Clock className="w-3.5 h-3.5 text-indigo-400" />
-            <span>설교 구간별 즉시 이동 (클릭 시 해당 시간부터 재생)</span>
+      {/* 하단 설교 타임라인 빠른 점프 칩 */}
+      {timeline && timeline.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center gap-1.5 overflow-x-auto pb-1">
+          <span className="text-[11px] font-semibold text-slate-400 shrink-0 mr-1 flex items-center gap-1">
+            <Play className="w-3 h-3 text-indigo-400" />
+            <span>설교 구간 바로가기:</span>
           </span>
-          <span className="font-mono text-amber-400 font-bold">
-            현재 재생 위치: {Math.floor(effectiveStartSec / 60)}분 {effectiveStartSec % 60}초
-          </span>
+          {timeline.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => handleJump(item.seconds)}
+              className="shrink-0 px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-indigo-600/30 border border-slate-700/80 hover:border-indigo-500/50 text-[11px] text-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <span className="font-mono text-amber-400 font-bold">{item.timeDisplay}</span>
+              <span className="truncate max-w-[140px]">{item.title.split(':')[0]}</span>
+            </button>
+          ))}
         </div>
-
-        <div className="flex items-center space-x-2 overflow-x-auto pb-1 text-xs">
-          {timeline?.map((item) => {
-            const isNear = Math.abs(item.seconds - effectiveStartSec) < 30;
-            return (
-              <button
-                key={item.id}
-                onClick={() => handleJump(item.seconds)}
-                className={`px-3 py-1.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center space-x-1.5 shrink-0 ${
-                  isNear
-                    ? 'bg-indigo-600 text-white border-indigo-500 font-bold shadow-md shadow-indigo-600/30 ring-2 ring-indigo-400/30'
-                    : 'bg-slate-800/80 hover:bg-slate-750 text-slate-300 border-slate-700'
-                }`}
-              >
-                <span className="font-mono text-[11px] opacity-80">{item.timeDisplay}</span>
-                <span className="truncate max-w-[130px] font-medium">{item.title}</span>
-                <Play className="w-3 h-3 ml-0.5 text-indigo-400" />
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      )}
     </div>
   );
 };

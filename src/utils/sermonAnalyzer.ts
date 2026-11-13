@@ -59,8 +59,11 @@ export const buildTailoredSermonRecord = (params: AnalyzeInputParams): SermonRec
     ? `file-${Date.now().toString(36)}`
     : params.videoId || parseYoutubeVideoId(params.youtubeUrl || '') || 'l5g3WzB5l2g';
 
-  let startSec = parseStartTimeToSec(params.startTime || '00:15');
-  if (startSec <= 0) startSec = 15;
+  let startSec = parseStartTimeToSec(params.startTime || '00:00');
+  if (startSec <= 0) {
+    const isWorship = /(예배|실황|전체|1부|2부|3부|4부|대예배)/.test(params.title || '');
+    startSec = isWorship ? 1500 : 90;
+  }
   const startMin = Math.floor(startSec / 60);
   const startRemSec = startSec % 60;
   const startTimeLabel = `${String(startMin).padStart(2, '0')}분 ${String(startRemSec).padStart(2, '0')}초`;

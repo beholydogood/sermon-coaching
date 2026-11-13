@@ -20,8 +20,8 @@ export const SAMPLE_SERMON_1: SermonRecord = {
     scriptureRef: '로마서 8장 28절 ~ 30절',
     targetAudience: '삶의 고난과 불확실성 속에서 하나님의 뜻을 찾는 모든 성도',
     youtubeId: 'l5g3WzB5l2g', // 동기화 영상
-    startTimeSec: 15,
-    startTimeLabel: '00분 15초',
+    startTimeSec: 120,
+    startTimeLabel: '02분 00초',
     totalLengthLabel: '약 38분 설교 (본문 강해 및 삶의 적용)',
     createdAt: '2026-03-08T11:30:00Z',
     // 하위 호환
@@ -295,8 +295,8 @@ export const SAMPLE_SERMON_2: SermonRecord = {
     scriptureRef: '이사야 43장 18절 ~ 21절',
     targetAudience: '새 봄과 새 학기를 맞이하며 새로운 출발을 갈망하는 성도',
     youtubeId: 'l5g3WzB5l2g',
-    startTimeSec: 30,
-    startTimeLabel: '00분 30초',
+    startTimeSec: 180,
+    startTimeLabel: '03분 00초',
     totalLengthLabel: '약 35분 설교',
     createdAt: '2026-03-01T11:30:00Z',
     institution: '은혜의빛교회',

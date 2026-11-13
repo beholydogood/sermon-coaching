@@ -6,7 +6,6 @@ const ARCHIVE_STORAGE_KEY = 'sermon_coaching_archive_v2';
 
 const applyAuthProfileToSermons = (sermons: SermonRecord[]): SermonRecord[] => {
   const auth = getDeviceAuthInfo();
-  if (!auth.pastorName && !auth.churchName) return sermons;
 
   return sermons.map((s) => {
     const isDefaultPreacher =
@@ -17,10 +16,23 @@ const applyAuthProfileToSermons = (sermons: SermonRecord[]): SermonRecord[] => {
       !s.meta.churchName ||
       s.meta.churchName === '은혜의빛교회';
 
+    // 기존 캐시된 샘플 설교의 시작 시간이 15초/30초로 되어 있으면 인트로 이후 본 설교 구간(2분/3분)으로 자동 보정
+    let nextStartSec = s.meta.startTimeSec;
+    let nextStartLabel = s.meta.startTimeLabel;
+    if (s.meta.id === 'sermon-sample-01' && (!nextStartSec || nextStartSec <= 15)) {
+      nextStartSec = 120;
+      nextStartLabel = '02분 00초';
+    } else if (s.meta.id === 'sermon-sample-02' && (!nextStartSec || nextStartSec <= 30)) {
+      nextStartSec = 180;
+      nextStartLabel = '03분 00초';
+    }
+
     return {
       ...s,
       meta: {
         ...s.meta,
+        startTimeSec: nextStartSec,
+        startTimeLabel: nextStartLabel,
         preacher: isDefaultPreacher && auth.pastorName ? auth.pastorName : s.meta.preacher,
         lecturer: isDefaultPreacher && auth.pastorName ? auth.pastorName : s.meta.lecturer,
         churchName: isDefaultChurch && auth.churchName ? auth.churchName : s.meta.churchName,

@@ -200,18 +200,23 @@ export interface RegisteredDevice {
 export interface LicenseUser {
   licenseKey: string;
   pastorName: string;
+  titleRole?: string; // 담임목사, 부목사, 강도사, 전도사, 선교사 등
   churchName: string;
+  phone?: string;
+  email?: string;
   role: 'pastor' | 'admin';
   maxDevices: number;
   status: 'active' | 'revoked';
   expiresAt: string;
   createdAt: string;
+  lastLoginAt?: string;
   registeredDevices: RegisteredDevice[];
   memo?: string;
 }
 
 export interface DeviceAuthInfo {
   isAuthorized: boolean;
+  authorizedKey?: string;
   licenseKey?: string;
   pastorName?: string;
   churchName?: string;

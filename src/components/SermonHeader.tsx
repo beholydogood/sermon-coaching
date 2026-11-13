@@ -272,14 +272,15 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
               </button>
             )}
 
-            {/* 관리자 중앙 배포/업그레이드 (Feature 4 & 5) */}
+            {/* 전용 관리자앱 이동 버튼 (비밀번호 보호됨) */}
             {onOpenAdminModal && (
               <button
                 onClick={onOpenAdminModal}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors cursor-pointer"
-                title="관리자: 라이선스 기기 인가 & 중앙 배포/업그레이드"
+                className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-emerald-950/60 text-emerald-300 hover:text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors cursor-pointer"
+                title="관리자 전용 앱 열기 (목회자 사용자 등록 및 라이선스 관리)"
               >
-                <Settings className="w-4 h-4 text-indigo-400" />
+                <Settings className="w-3.5 h-3.5 text-emerald-400" />
+                <span>관리자앱</span>
               </button>
             )}
 

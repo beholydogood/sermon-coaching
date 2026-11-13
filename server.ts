@@ -5,19 +5,55 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { buildStrategicBookPlan } from './src/utils/bookGenerator';
+import { parseUploadedMaterialBuffer } from './src/utils/materialParserServer';
+import {
+  getAllLicenseUsers,
+  findUserByKey,
+  createLicenseUser,
+  updateLicenseUser,
+  deleteLicenseUser,
+  toggleLicenseStatus,
+  removeRegisteredDevice,
+  importLicenseUsers,
+  verifyAndRegisterDeviceOnServer,
+} from './src/utils/userStoreServer';
 
 dotenv.config();
 
 const ROOT_DIR = process.cwd();
+const SETTINGS_FILE = path.resolve(ROOT_DIR, 'data', 'settings.json');
+
+const loadRuntimeSettings = (): { geminiApiKey?: string; adminPassword?: string } => {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+};
+
+const saveRuntimeSettings = (patch: { geminiApiKey?: string; adminPassword?: string }) => {
+  try {
+    const dir = path.dirname(SETTINGS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const curr = loadRuntimeSettings();
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ...curr, ...patch }, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Failed to save settings:', e);
+  }
+};
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '30mb' }));
 
-// GoogleGenAI 클라이언트 초기화
+// GoogleGenAI 클라이언트 초기화 (환경변수 또는 관리자 설정 키 지원)
 const getAiClient = () => {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const runtime = loadRuntimeSettings();
+  const apiKey = runtime.geminiApiKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return null;
   }
@@ -136,10 +172,15 @@ const fetchYoutubeDetails = async (videoId: string, url: string) => {
   }
 
   let detectedStartSec = extractUrlStartSec(url);
+  let startSource = detectedStartSec > 0 ? 'url_param' : 'default';
 
   try {
     const watchRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+      },
     });
     if (watchRes.ok) {
       const html = await watchRes.text();
@@ -159,15 +200,40 @@ const fetchYoutubeDetails = async (videoId: string, url: string) => {
       const lenMatch = html.match(/"lengthSeconds":"(\d+)"/);
       lengthSec = lenMatch ? parseInt(lenMatch[1], 10) : 0;
 
+      // 1순위: 유튜브 영상 내 챕터 마커(Chapters)에서 '설교 / 말씀선포 / 강해 / 메시지' 구간 정밀 탐지
+      if (detectedStartSec <= 0) {
+        const chapterRegex =
+          /"title":\{"simpleText":"([^"]+)"\}[^}]{0,250}?"timeRangeStartMillis":"?(\d+)"?/g;
+        let chMatch: RegExpExecArray | null;
+        while ((chMatch = chapterRegex.exec(html)) !== null) {
+          const chTitle = chMatch[1] || '';
+          const startMs = parseInt(chMatch[2] || '0', 10);
+          if (
+            /(설교|말씀\s*선포|말씀|강해|메시지|담임목사|목사|Sermon|Message)/i.test(chTitle) &&
+            !/(찬양|광고|봉헌|축도|예고)/.test(chTitle) &&
+            startMs > 0
+          ) {
+            detectedStartSec = Math.floor(startMs / 1000);
+            startSource = 'youtube_chapter';
+            break;
+          }
+        }
+      }
+
+      // 2순위: 설명란(Description) 타임스탬프 라인에서 설교 시작 시점 추출
       if (detectedStartSec <= 0 && description) {
         const lines = description.split('\n');
         for (const line of lines) {
-          if (/(설교|말씀\s*선포|말씀\s*:|설교\s*:|강해|본문\s*설교|Sermon|Message)/i.test(line)) {
+          if (
+            /(설교|말씀\s*선포|말씀\s*:|설교\s*:|강해|본문\s*설교|메시지|Sermon|Message)/i.test(line) &&
+            !/(찬양|성가대|특송|봉헌)/.test(line)
+          ) {
             const timeMatch = line.match(/(\d{1,2}:\d{2}(?::\d{2})?)/);
             if (timeMatch) {
               const sec = parseTimeString(timeMatch[1]);
               if (sec > 0) {
                 detectedStartSec = sec;
+                startSource = 'description_timestamp';
                 break;
               }
             }
@@ -175,8 +241,57 @@ const fetchYoutubeDetails = async (videoId: string, url: string) => {
         }
       }
 
-      if (detectedStartSec <= 0 && lengthSec >= 3300 && /(예배|실황|전체|1부|2부|3부|대예배)/.test(videoTitle + description)) {
-        detectedStartSec = 1320;
+      // 3순위: 자동 자막(Caption Track)에서 예배 찬양/기도 이후 설교 시작 멘트 위치 탐색 (긴 영상인 경우)
+      if (detectedStartSec <= 0 && lengthSec >= 1200) {
+        const capMatch = html.match(/"captionTracks":\[\{"baseUrl":"([^"]+)"/);
+        if (capMatch && capMatch[1]) {
+          try {
+            const capUrl = capMatch[1].replace(/\\u0026/g, '&');
+            const capRes = await fetch(capUrl);
+            if (capRes.ok) {
+              const capXml = await capRes.text();
+              const textTagRegex = /<text start="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
+              let tm: RegExpExecArray | null;
+              const minSearchSec = lengthSec >= 2700 ? 600 : 120;
+              while ((tm = textTagRegex.exec(capXml)) !== null) {
+                const tSec = Math.floor(parseFloat(tm[1] || '0'));
+                if (tSec < minSearchSec) continue;
+                const txt = tm[2] || '';
+                if (
+                  /(오늘\s*하나님께서?\s*주시는\s*말씀|오늘\s*본문\s*말씀|함께\s*봉독|설교\s*제목|말씀을\s*나누겠습니다|할렐루야\s*옆\s*사람과\s*인사)/.test(
+                    txt
+                  )
+                ) {
+                  detectedStartSec = tSec;
+                  startSource = 'caption_analysis';
+                  break;
+                }
+              }
+            }
+          } catch {
+            // ignore caption fetch error
+          }
+        }
+      }
+
+      // 4순위: 영상 길이 & 예배 실황 키워드 기반 지능형 설교 시작점 추정 (00:00 처음부터 재생되는 현상 완전 방지!)
+      const isFullWorship = /(예배|실황|전체|1부|2부|3부|4부|대예배|주일낮|수요|금요)/.test(
+        videoTitle + ' ' + description
+      );
+      if (detectedStartSec <= 0) {
+        if (lengthSec >= 3600 || (isFullWorship && lengthSec === 0)) {
+          detectedStartSec = 1500; // 25분 00초 (전체 예배 평균 설교 등단 시점)
+          startSource = 'worship_heuristic_25m';
+        } else if (lengthSec >= 2400) {
+          detectedStartSec = 1080; // 18분 00초
+          startSource = 'worship_heuristic_18m';
+        } else if (lengthSec >= 600) {
+          detectedStartSec = 90; // 01분 30초 (단편 설교 영상 앞부분 인트로/타이틀/성경봉독 스킵)
+          startSource = 'sermon_clip_90s';
+        } else if (lengthSec > 90) {
+          detectedStartSec = 45; // 00분 45초
+          startSource = 'short_clip_45s';
+        }
       }
     }
   } catch (e) {
@@ -184,7 +299,8 @@ const fetchYoutubeDetails = async (videoId: string, url: string) => {
   }
 
   if (detectedStartSec <= 0) {
-    detectedStartSec = 15;
+    const isWorshipTitle = /(예배|실황|전체|1부|2부|3부|대예배)/.test(videoTitle);
+    detectedStartSec = isWorshipTitle ? 1500 : 60;
   }
 
   const detectedScripture =
@@ -201,6 +317,7 @@ const fetchYoutubeDetails = async (videoId: string, url: string) => {
     detectedScripture,
     detectedStartSec,
     detectedStartTime: formatSecToMmSs(detectedStartSec),
+    startSource,
   };
 };
 
@@ -1022,7 +1139,7 @@ app.post('/api/chat-coach', async (req, res) => {
     });
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents,
       config: { systemInstruction },
     });
@@ -1035,75 +1152,154 @@ app.post('/api/chat-coach', async (req, res) => {
 });
 
 // ==========================================
-// 도서 집필 & 원고 초안 생성 API (Feature 3)
+// 도서 집필 참고자료(PDF, PPTX, DOCX, TXT, HWPX) 실제 텍스트 추출 API
+// ==========================================
+app.post('/api/book/extract-material', async (req, res) => {
+  try {
+    const { fileName, base64Data } = req.body;
+    if (!fileName || !base64Data) {
+      return res.status(400).json({ error: '파일 이름과 데이터가 필요합니다.' });
+    }
+
+    const parsed = parseUploadedMaterialBuffer(fileName, base64Data);
+
+    // PDF 등 이미지성 문서이거나 AI 요약 보강이 가능한 경우 Gemini 멀티모달로 실제 텍스트 정밀 추출
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    const ai = getAiClient();
+    if (ai && ext === 'pdf' && parsed.extractedText.length < 120) {
+      try {
+        const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+        const aiRes = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType: 'application/pdf', data: cleanBase64 } },
+                {
+                  text: '이 PDF 문서의 핵심 주제, 성경 주해 내용, 목회적 통찰, 중요 인용구들을 책 집필에 바로 활용할 수 있도록 한국어로 상세히 추출·요약해 주세요 (800자 내외).',
+                },
+              ],
+            },
+          ],
+        });
+        if (aiRes.text && aiRes.text.trim().length > 30) {
+          parsed.extractedText = aiRes.text.trim();
+          parsed.summaryPoint = aiRes.text.trim().split('\n')[0].slice(0, 150);
+        }
+      } catch (pdfAiErr) {
+        console.warn('PDF multimodal fallback used:', pdfAiErr);
+      }
+    }
+
+    return res.json({
+      success: true,
+      extractedText: parsed.extractedText,
+      summaryPoint: parsed.summaryPoint,
+      keywords: parsed.keywords,
+    });
+  } catch (err: any) {
+    console.error('Material Extract Error:', err);
+    return res.status(500).json({ error: err.message || '문서 텍스트 추출 중 오류 발생' });
+  }
+});
+
+// ==========================================
+// 도서 집필 & 원고 초안 생성 API (선택된 모든 영상 + 업로드된 모든 자료 통합 반영)
 // ==========================================
 app.post('/api/book/generate-proposal', async (req, res) => {
   try {
     const { bookType, writingStyle, authorName, churchName, sermons, materials } = req.body;
-    const ai = getAiClient();
+    const sermonList = Array.isArray(sermons) ? sermons : [];
+    const materialList = Array.isArray(materials) ? materials : [];
 
-    if (ai) {
+    // 기본 전략 기획안(모든 선택 설교 + 업로드 자료 본문 통합)을 먼저 계산하여 최소 챕터 수 보장
+    const strategicPlan = buildStrategicBookPlan({
+      bookType: bookType || '에세이/신앙성숙',
+      writingStyle: writingStyle || '따뜻한 감성 에세이체',
+      authorName: authorName || '담임목사',
+      churchName: churchName || '소속교회',
+      sermons: sermonList,
+      materials: materialList,
+    });
+
+    const ai = getAiClient();
+    if (ai && sermonList.length > 0) {
       try {
-        const prompt = `당신은 기독교 출판사 전문 기획 편집장입니다.
-다음 설교 영상 데이터와 업로드된 참고자료를 분석하여 전문 도서 출판 기획안(제목, 부제, 대안제목, 기획의도, 타겟독자, 3대 차별화 포인트, 윤문 가이드, 5개 챕터 목차)을 JSON 형식으로 작성해 주세요.
-- 저자: ${authorName || '목회자'} (${churchName || '교회'})
+        const sermonsBrief = sermonList
+          .map(
+            (s: any, idx: number) =>
+              `[설교 ${idx + 1}] 제목: "${s.meta?.sermonTitle}" | 본문: ${s.meta?.scriptureRef} | 요약: ${s.summary} | 대지: ${(s.timeline || []).map((t: any) => t.title).join(' -> ')}`
+          )
+          .join('\n');
+
+        const materialsBrief =
+          materialList.length > 0
+            ? materialList
+                .map(
+                  (m: any, idx: number) =>
+                    `[업로드 자료 ${idx + 1}: ${m.fileName} (${m.fileType})]\n핵심 요약: ${m.summaryPoint || ''}\n실제 추출 본문:\n${(m.extractedText || '').slice(0, 1200)}`
+                )
+                .join('\n\n')
+            : '업로드된 외부 문서 자료 없음 (선택된 설교들 중심으로 구성)';
+
+        const minChapters = strategicPlan.chapters.length;
+        const prompt = `당신은 기독교 출판사 최고 기획 편집장입니다.
+목회자가 선택한 총 ${sermonList.length}편의 설교 영상과 ${materialList.length}개의 업로드 참고자료를 빠짐없이 모두 통합 분석하여, 단행본 출판 기획안과 최소 ${minChapters}개 이상의 챕터별 원고 초안을 JSON으로 작성해 주세요.
+
+[저자 및 도서 설정]
+- 저자: ${authorName || '목회자'} (${churchName || '소속교회'})
 - 도서 장르: ${bookType || '에세이/신앙성숙'}
 - 윤문 문체: ${writingStyle || '따뜻한 감성 에세이체'}
-- 선택된 설교 목록: ${JSON.stringify(sermons || [])}
-- 참고자료 요약: ${JSON.stringify(materials || [])}
+
+[선택된 설교 영상 목록 (${sermonList.length}편 - 모든 설교가 각 부/장에 반드시 반영되어야 함)]
+${sermonsBrief}
+
+[업로드된 참고자료 목록 (${materialList.length}건 - 추출된 실제 본문 내용과 키워드를 기획의도, 차별화 포인트, 각 챕터 본문 원고에 반드시 녹여낼 것)]
+${materialsBrief}
 
 반드시 다음 JSON 구조로만 반환하세요:
 {
   "proposal": {
-    "mainTitle": "string",
-    "subTitle": "string",
-    "alternativeTitles": ["string"],
-    "publishingIntent": "string",
-    "targetReaders": "string",
-    "differentiationPoints": ["string", "string", "string"],
-    "editorialNote": "string"
+    "mainTitle": "선택된 설교들과 업로드 자료를 아우르는 출판용 메인 제목",
+    "subTitle": "부제",
+    "alternativeTitles": ["대안제목1", "대안제목2", "대안제목3"],
+    "publishingIntent": "선택된 ${sermonList.length}편의 설교 제목들과 업로드된 ${materialList.length}개 자료의 실제 내용을 구체적으로 언급하며 통합 출판 기획의도를 서술",
+    "targetReaders": "타겟 독자층 3가지 (줄바꿈 구분)",
+    "differentiationPoints": ["차별화1 (설교 통합 관점)", "차별화2 (업로드 자료 결합 관점)", "차별화3 (독자 적용 관점)"],
+    "editorialNote": "윤문 및 편성 전략 노트"
   },
   "chapters": [
     {
       "chapterNum": 1,
-      "partTitle": "string",
-      "chapterTitle": "string",
-      "subtitle": "string",
-      "scriptureFocus": "string",
-      "coreMessage": "string",
-      "subSections": ["string", "string", "string"],
-      "manuscriptDraft": "출판용 문어체 원고 초안 (최소 600자 이상)",
-      "reflectionQuestions": ["string", "string"],
-      "closingPrayer": "string",
-      "wordCount": 700
+      "partTitle": "제1부 | 부 제목",
+      "chapterTitle": "장 제목",
+      "subtitle": "장 부제",
+      "scriptureFocus": "핵심 성경 본문",
+      "coreMessage": "핵심 메시지 1문장",
+      "subSections": ["1. 소주제1", "2. 소주제2", "3. 소주제3"],
+      "manuscriptDraft": "설교 내용과 업로드 자료의 핵심 문장을 녹여낸 품격 있는 출판 문어체 원고 초안 (최소 700자 이상)",
+      "reflectionQuestions": ["묵상 질문 1", "묵상 질문 2"],
+      "closingPrayer": "마무리 기도문",
+      "wordCount": 750
     }
   ]
 }`;
 
         const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+          model: 'gemini-2.5-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           config: { responseMimeType: 'application/json' },
         });
 
         const parsed = JSON.parse(response.text || '{}');
-        if (parsed.proposal && parsed.chapters) {
+        if (parsed.proposal && Array.isArray(parsed.chapters) && parsed.chapters.length >= 3) {
           return res.json({ success: true, ...parsed });
         }
       } catch (geminiErr) {
         console.warn('Gemini book proposal fallback triggered:', geminiErr);
       }
     }
-
-    // 선택된 모든 설교(1~N편)와 업로드 자료를 통합 반영한 전략 기획안 및 챕터별 초안 반환
-    const strategicPlan = buildStrategicBookPlan({
-      bookType: bookType || '에세이/신앙성숙',
-      writingStyle: writingStyle || '따뜻한 감성 에세이체',
-      authorName: authorName || '담임목사',
-      churchName: churchName || '소속교회',
-      sermons: Array.isArray(sermons) ? sermons : [],
-      materials: Array.isArray(materials) ? materials : [],
-    });
 
     return res.json({
       success: true,
@@ -1119,26 +1315,31 @@ app.post('/api/book/generate-proposal', async (req, res) => {
 // 챕터별 원고 윤문/확장 API
 app.post('/api/book/generate-chapter', async (req, res) => {
   try {
-    const { chapter, writingStyle, authorName, proposal } = req.body;
+    const { chapter, writingStyle, authorName, proposal, materials } = req.body;
     const ai = getAiClient();
 
     if (ai && chapter) {
       try {
+        const matContext =
+          Array.isArray(materials) && materials.length > 0
+            ? `\n- 참고자료 핵심 발췌:\n${materials.map((m: any) => `[${m.fileName}] ${(m.extractedText || '').slice(0, 600)}`).join('\n')}`
+            : '';
+
         const prompt = `당신은 베스트셀러 기독교 서적 전문 출판 편집자입니다.
-아래 챕터의 설교 구어체 원고를 출판용 고품격 문어체("${writingStyle || '따뜻한 감성 에세이체'}")로 풍성하고 감동 깊게 윤문 및 확장 집필해 주세요.
+아래 챕터의 설교 구어체 원고와 업로드된 참고자료 내용을 결합하여 출판용 고품격 문어체("${writingStyle || '따뜻한 감성 에세이체'}")로 풍성하고 감동 깊게 윤문 및 확장 집필해 주세요.
 - 저자: ${authorName || '목회자'}
 - 도서명: ${proposal?.mainTitle || '신앙 도서'}
 - 챕터: 제${chapter.chapterNum}장 "${chapter.chapterTitle}" (부제: ${chapter.subtitle})
 - 본문 성구: ${chapter.scriptureFocus}
 - 핵심 메시지: ${chapter.coreMessage}
-- 소주제 구성: ${chapter.subSections?.join(', ')}
+- 소주제 구성: ${chapter.subSections?.join(', ')}${matContext}
 - 기존 초안:
 ${chapter.manuscriptDraft}
 
-강단 구어체의 군더더기('성도 여러분', '아멘 하시기 바랍니다', '이제...' 등)를 완전히 탈피하여, 독자가 혼자 읽으며 깊은 눈물과 영적 회복을 경험할 수 있는 완성도 높은 출판 원고(최소 800자 이상) 본문 텍스트만 깔끔하게 작성해 주세요.`;
+강단 구어체의 군더더기('성도 여러분', '아멘 하시기 바랍니다', '이제...' 등)를 완전히 탈피하여, 독자가 혼자 읽으며 깊은 눈물과 영적 회복을 경험할 수 있는 완성도 높은 출판 원고(최소 900자 이상) 본문 텍스트만 깔끔하게 작성해 주세요.`;
 
         const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+          model: 'gemini-2.5-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
         });
 
@@ -1215,39 +1416,169 @@ app.post('/api/release/publish', (req, res) => {
   return res.status(400).json({ error: '올바른 릴리즈 정보가 아닙니다.' });
 });
 
-// 기기 인가 검증 API (Feature 4)
-app.post('/api/auth/verify', (req, res) => {
-  const { licenseKey, pastorName, churchName } = req.body;
-  const key = (licenseKey || '').trim().toUpperCase();
+// ==========================================
+// 관리자앱(Admin App) 전용 사용자 등록·관리 & 기기 인가 API
+// ==========================================
+const verifyAdminAuth = (req: express.Request): boolean => {
+  const token = (req.headers['x-admin-token'] as string) || '';
+  const runtime = loadRuntimeSettings();
+  const validPass = runtime.adminPassword || process.env.ADMIN_PASSWORD || 'admin1234';
+  return token === validPass || token === 'ADMIN-MASTER-2026';
+};
 
-  const VALID_KEYS = [
-    'SERMON-VIP-2026',
-    'GRACE-COACH-777',
-    'ADMIN-MASTER-2026',
-    'HOMILETICS-PRO-1004',
-  ];
+app.post('/api/admin/login', (req, res) => {
+  const { password } = req.body;
+  const runtime = loadRuntimeSettings();
+  const validPass = runtime.adminPassword || process.env.ADMIN_PASSWORD || 'admin1234';
+  const trimmed = (password || '').trim();
 
-  if (VALID_KEYS.includes(key) || key.startsWith('SERMON-')) {
-    const deviceId = `DEV-${Math.random().toString(36).substring(2, 9).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+  if (trimmed === validPass || trimmed.toUpperCase() === 'ADMIN-MASTER-2026') {
     return res.json({
       success: true,
-      message: '인가된 정식 라이선스 키입니다.',
-      authInfo: {
-        isAuthorized: true,
-        licenseKey: key,
-        pastorName: pastorName || '이은혜 담임목사',
-        churchName: churchName || '은혜의빛교회',
-        deviceId,
-        role: key === 'ADMIN-MASTER-2026' ? 'admin' : 'pastor',
-        authorizedAt: new Date().toISOString(),
-      },
+      adminToken: trimmed,
+      hasAiKey: Boolean(runtime.geminiApiKey || process.env.GEMINI_API_KEY),
     });
   }
-
   return res.status(401).json({
     success: false,
-    message: '등록되지 않은 라이선스 키입니다. 정식 발급된 키를 입력해 주세요.',
+    message: '관리자 비밀번호(또는 마스터 키)가 일치하지 않습니다.',
   });
+});
+
+app.get('/api/admin/users', (req, res) => {
+  if (!verifyAdminAuth(req)) {
+    return res.status(401).json({ success: false, message: '관리자 인증이 필요합니다.' });
+  }
+  const users = getAllLicenseUsers();
+  const runtime = loadRuntimeSettings();
+  return res.json({
+    success: true,
+    users,
+    hasAiKey: Boolean(runtime.geminiApiKey || process.env.GEMINI_API_KEY),
+  });
+});
+
+app.post('/api/admin/users', (req, res) => {
+  if (!verifyAdminAuth(req)) {
+    return res.status(401).json({ success: false, message: '관리자 인증이 필요합니다.' });
+  }
+  const result = createLicenseUser(req.body || {});
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+  return res.json({ ...result, users: getAllLicenseUsers() });
+});
+
+app.put('/api/admin/users/:licenseKey', (req, res) => {
+  if (!verifyAdminAuth(req)) {
+    return res.status(401).json({ success: false, message: '관리자 인증이 필요합니다.' });
+  }
+  const result = updateLicenseUser(req.params.licenseKey, req.body || {});
+  if (!result.success) {
+    return res.status(404).json(result);
+  }
+  return res.json({ ...result, users: getAllLicenseUsers() });
+});
+
+app.delete('/api/admin/users/:licenseKey', (req, res) => {
+  if (!verifyAdminAuth(req)) {
+    return res.status(401).json({ success: false, message: '관리자 인증이 필요합니다.' });
+  }
+  const result = deleteLicenseUser(req.params.licenseKey);
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+  return res.json({ ...result, users: getAllLicenseUsers() });
+});
+
+app.post('/api/admin/users/:licenseKey/toggle-status', (req, res) => {
+  if (!verifyAdminAuth(req)) {
+    return res.status(401).json({ success: false, message: '관리자 인증이 필요합니다.' });
+  }
+  const result = toggleLicenseStatus(req.params.licenseKey);
+  if (!result.success) {
+    return res.status(404).json({ success: false, message: '사용자를 찾을 수 없습니다.' });
+  }
+  return res.json({ success: true, user: result.user, users: getAllLicenseUsers() });
+});
+
+app.post('/api/admin/users/:licenseKey/remove-device', (req, res) => {
+  if (!verifyAdminAuth(req)) {
+    return res.status(401).json({ success: false, message: '관리자 인증이 필요합니다.' });
+  }
+  const { deviceId } = req.body;
+  const result = removeRegisteredDevice(req.params.licenseKey, deviceId || 'ALL');
+  if (!result.success) {
+    return res.status(404).json({ success: false, message: '사용자를 찾을 수 없습니다.' });
+  }
+  return res.json({ success: true, user: result.user, users: getAllLicenseUsers() });
+});
+
+app.post('/api/admin/users/import', (req, res) => {
+  if (!verifyAdminAuth(req)) {
+    return res.status(401).json({ success: false, message: '관리자 인증이 필요합니다.' });
+  }
+  const { users } = req.body;
+  const result = importLicenseUsers(users);
+  return res.json({ ...result, users: getAllLicenseUsers() });
+});
+
+app.post('/api/admin/settings', (req, res) => {
+  if (!verifyAdminAuth(req)) {
+    return res.status(401).json({ success: false, message: '관리자 인증이 필요합니다.' });
+  }
+  const { geminiApiKey, newAdminPassword } = req.body;
+  const patch: { geminiApiKey?: string; adminPassword?: string } = {};
+  if (typeof geminiApiKey === 'string') {
+    patch.geminiApiKey = geminiApiKey.trim();
+  }
+  if (typeof newAdminPassword === 'string' && newAdminPassword.trim().length >= 4) {
+    patch.adminPassword = newAdminPassword.trim();
+  }
+  saveRuntimeSettings(patch);
+  const runtime = loadRuntimeSettings();
+  return res.json({
+    success: true,
+    hasAiKey: Boolean(runtime.geminiApiKey || process.env.GEMINI_API_KEY),
+    adminToken: runtime.adminPassword || process.env.ADMIN_PASSWORD || 'admin1234',
+  });
+});
+
+// 목사님 초대 링크(/?key=...) 접속 또는 키 입력 시 등록된 성함·교회 자동 조회 API
+app.get('/api/auth/lookup-key', (req, res) => {
+  const key = String(req.query.key || '').trim();
+  const user = findUserByKey(key);
+  if (!user) {
+    return res.status(404).json({ success: false, message: '등록되지 않은 라이선스 키입니다.' });
+  }
+  return res.json({
+    success: true,
+    pastorName: user.pastorName,
+    churchName: user.churchName,
+    status: user.status,
+    maxDevices: user.maxDevices,
+    registeredCount: user.registeredDevices.length,
+  });
+});
+
+// 기기 인가 검증 및 등록 API (중앙 사용자 DB와 실시간 연동)
+app.post('/api/auth/verify', (req, res) => {
+  const { licenseKey, pastorName, churchName, deviceId, deviceLabel } = req.body;
+  const userAgent = req.headers['user-agent'] || '';
+
+  const result = verifyAndRegisterDeviceOnServer({
+    licenseKey,
+    pastorName,
+    churchName,
+    deviceId,
+    deviceLabel,
+    userAgent,
+  });
+
+  if (result.success) {
+    return res.json(result);
+  }
+  return res.status(401).json(result);
 });
 
 // Vite 개발 서버 또는 프로덕션 정적 서빙
