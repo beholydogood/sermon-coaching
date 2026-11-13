@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#7c3aed" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)" />
+  <!-- 성경책 & 십자가 심볼 -->
+  <path d="M128 160C128 142.327 142.327 128 160 128H352C369.673 128 384 142.327 384 160V352C384 369.673 369.673 384 352 384H160C142.327 384 128 369.673 128 352V160Z" fill="#0f172a" fill-opacity="0.35" />
+  <!-- 십자가 -->
+  <path d="M256 160V352M208 224H304" stroke="#ffffff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- 스피치 음파 -->
+  <circle cx="256" cy="256" r="160" stroke="#fbbf24" stroke-width="12" stroke-linecap="round" stroke-dasharray="16 32" opacity="0.6" />
+</svg>

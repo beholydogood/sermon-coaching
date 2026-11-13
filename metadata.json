@@ -1,0 +1,8 @@
+{
+  "name": "AI 설교 코칭 & 피드백 스튜디오",
+  "description": "설교학 5대 지표 및 스피치·바디랭귀지 AI 정밀 피드백 스튜디오",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

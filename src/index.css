@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .bg-gradient-to-r {
+    background-image: linear-gradient(to right, var(--tw-gradient-stops));
+  }
+  .bg-gradient-to-tr {
+    background-image: linear-gradient(to top right, var(--tw-gradient-stops));
+  }
+  .bg-gradient-to-br {
+    background-image: linear-gradient(to bottom right, var(--tw-gradient-stops));
+  }
+}

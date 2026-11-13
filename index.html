@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>AI 설교 코칭 & 피드백 스튜디오</title>
+    <meta name="description" content="목회자를 위한 설교학 5대 지표 및 스피치·바디랭귀지 AI 정밀 피드백 스튜디오" />
+    <meta name="theme-color" content="#4f46e5" />
+    
+    <!-- PWA Settings -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="설교코칭스튜디오" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="AI 설교 코칭 & 피드백 스튜디오" />
+    <meta property="og:description" content="설교학 5대 지표 및 스피치(말투/손버릇/시선/틱) 정밀 진단 시스템" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Pretendard Font -->
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+
+    <!-- Tailwind CSS CDN (Fail-safe, 100% Reliable Styling) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              slate: {
+                850: '#151e2e',
+              }
+            },
+            fontFamily: {
+              sans: ['Pretendard', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'Roboto', 'sans-serif'],
+            }
+          }
+        }
+      }
+    </script>
+
+    <style>
+      body {
+        font-family: "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+        background-color: #020617;
+        color: #f8fafc;
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-indigo-500 selection:text-white min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

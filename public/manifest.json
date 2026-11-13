@@ -1,0 +1,17 @@
+{
+  "name": "AI 설교 코칭 스튜디오",
+  "short_name": "설교코칭",
+  "description": "설교학 5대 지표 및 스피치·바디랭귀지 AI 정밀 피드백 스튜디오",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
