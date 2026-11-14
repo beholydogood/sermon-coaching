@@ -7,6 +7,13 @@ import { GoogleGenAI } from '@google/genai';
 import { buildStrategicBookPlan } from './src/utils/bookGenerator';
 import { parseUploadedMaterialBuffer } from './src/utils/materialParserServer';
 import {
+  extractYoutubeId,
+  extractScriptureFromText,
+  parseTimeStringToSec,
+  formatSecToMmSs,
+  fetchYoutubeSermonDetails,
+} from './src/utils/youtubeSermonDetector';
+import {
   getAllLicenseUsers,
   findUserByKey,
   createLicenseUser,
@@ -85,242 +92,6 @@ const DEFAULT_SERMON_CONTEXT = {
   topic: '로마서 8장 28절 섭리 강해',
 };
 
-// 유튜브 ID 추출 (일반 watch, youtu.be, live, shorts, embed 모두 지원)
-const extractYoutubeId = (url: string): string | null => {
-  if (!url) return null;
-  const trimmed = url.trim();
-  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
-  const regExp = /(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|v\/|shorts\/|live\/|u\/\w\/))([a-zA-Z0-9_-]{11})/;
-  const match = trimmed.match(regExp);
-  return match && match[1] ? match[1] : null;
-};
-
-// 텍스트(제목/설명란)에서 성경 본문 구절 자동 추출
-const extractScriptureFromText = (text: string): string => {
-  if (!text) return '';
-  const books =
-    '창세기|출애굽기|레위기|민수기|신명기|여호수아|사사기|룻기|사무엘상|사무엘하|열왕기상|열왕기하|역대상|역대하|에스라|느헤미야|에스더|욥기|시편|잠언|전도서|아가|이사야|예레미야|예레미야애가|에스겔|다니엘|호세아|요엘|아모스|오바댜|요나|미가|나훔|하박국|스바냐|학개|스가랴|말라기|마태복음|마가복음|누가복음|요한복음|사도행전|로마서|고린도전서|고린도후서|갈라디아서|에베소서|빌립보서|골로새서|데살로니가전서|데살로니가후서|디모데전서|디모데후서|디도서|빌레몬서|히브리서|야고보서|베드로전서|베드로후서|요한일서|요한이서|요한삼서|유다서|요한계시록|창|출|레|민|신|수|삿|룻|삼상|삼하|왕상|왕하|대상|대하|스|느|에|욥|시|잠|전|아|사|렘|애|겔|단|호|욜|암|옵|욘|미|나|합|습|학|슥|말|마|막|눅|요|행|롬|고전|고후|갈|엡|빌|골|살전|살후|딤전|딤후|딛|몬|히|약|벧전|벧후|요일|요이|요삼|유|계';
-  const regex = new RegExp(
-    `((?:${books})\\s*\\d+\\s*(?:장|편|:)\\s*\\d*(?:\\s*[-~]\\s*\\d+)?\\s*절?)`,
-    'i'
-  );
-  const match = text.match(regex);
-  return match && match[1] ? match[1].trim() : '';
-};
-
-// 시간 문자열 파싱 (예: "18:30", "18분 30초", "1110")
-const parseTimeString = (timeStr: string | number): number => {
-  if (typeof timeStr === 'number') return timeStr;
-  if (!timeStr) return 0;
-  const trimmed = timeStr.trim().replace(/초/g, '');
-  if (trimmed.includes(':')) {
-    const parts = trimmed.split(':').map((p) => parseInt(p, 10));
-    if (parts.length === 2) return (parts[0] || 0) * 60 + (parts[1] || 0);
-    if (parts.length === 3) return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
-  } else if (trimmed.includes('분')) {
-    const parts = trimmed.split('분');
-    const min = parseInt(parts[0], 10) || 0;
-    const sec = parseInt(parts[1], 10) || 0;
-    return min * 60 + sec;
-  }
-  return parseInt(trimmed, 10) || 0;
-};
-
-const formatSecToMmSs = (sec: number): string => {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-};
-
-// 유튜브 URL 파라미터(?t=, &t=, &start=)에서 시작 시간(초) 추출
-const extractUrlStartSec = (url: string): number => {
-  if (!url) return 0;
-  const match = url.match(/[?&](?:t|start)=([0-9hms]+)/i);
-  if (!match || !match[1]) return 0;
-  const raw = match[1].toLowerCase();
-  if (/^\d+$/.test(raw)) return parseInt(raw, 10);
-  let total = 0;
-  const h = raw.match(/(\d+)h/);
-  const m = raw.match(/(\d+)m/);
-  const s = raw.match(/(\d+)s/);
-  if (h) total += parseInt(h[1], 10) * 3600;
-  if (m) total += parseInt(m[1], 10) * 60;
-  if (s) total += parseInt(s[1], 10);
-  return total;
-};
-
-// 유튜브 페이지 메타데이터(제목, 채널, 설명란, 성경본문, 설교 시작 시간) 통합 추출
-const fetchYoutubeDetails = async (videoId: string, url: string) => {
-  let videoTitle = '';
-  let channel = '';
-  let description = '';
-  let lengthSec = 0;
-  let thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-  try {
-    const oembedRes = await fetch(
-      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
-    );
-    if (oembedRes.ok) {
-      const oembedData: any = await oembedRes.json();
-      videoTitle = oembedData.title || '';
-      channel = oembedData.author_name || '';
-      thumbnailUrl = oembedData.thumbnail_url || thumbnailUrl;
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  let detectedStartSec = extractUrlStartSec(url);
-  let startSource = detectedStartSec > 0 ? 'url_param' : 'default';
-
-  try {
-    const watchRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
-      },
-    });
-    if (watchRes.ok) {
-      const html = await watchRes.text();
-
-      if (!videoTitle) {
-        const titleMatch = html.match(/<title>(.*?)<\/title>/i);
-        if (titleMatch && titleMatch[1]) {
-          videoTitle = titleMatch[1].replace(/\s*-\s*YouTube$/i, '').trim();
-        }
-      }
-
-      const descMatch = html.match(/"shortDescription":"((?:\\.|[^"\\])*)"/);
-      if (descMatch && descMatch[1]) {
-        description = descMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-      }
-
-      const lenMatch = html.match(/"lengthSeconds":"(\d+)"/);
-      lengthSec = lenMatch ? parseInt(lenMatch[1], 10) : 0;
-
-      // 1순위: 유튜브 영상 내 챕터 마커(Chapters)에서 '설교 / 말씀선포 / 강해 / 메시지' 구간 정밀 탐지
-      if (detectedStartSec <= 0) {
-        const chapterRegex =
-          /"title":\{"simpleText":"([^"]+)"\}[^}]{0,250}?"timeRangeStartMillis":"?(\d+)"?/g;
-        let chMatch: RegExpExecArray | null;
-        while ((chMatch = chapterRegex.exec(html)) !== null) {
-          const chTitle = chMatch[1] || '';
-          const startMs = parseInt(chMatch[2] || '0', 10);
-          if (
-            /(설교|말씀\s*선포|말씀|강해|메시지|담임목사|목사|Sermon|Message)/i.test(chTitle) &&
-            !/(찬양|광고|봉헌|축도|예고)/.test(chTitle) &&
-            startMs > 0
-          ) {
-            detectedStartSec = Math.floor(startMs / 1000);
-            startSource = 'youtube_chapter';
-            break;
-          }
-        }
-      }
-
-      // 2순위: 설명란(Description) 타임스탬프 라인에서 설교 시작 시점 추출
-      if (detectedStartSec <= 0 && description) {
-        const lines = description.split('\n');
-        for (const line of lines) {
-          if (
-            /(설교|말씀\s*선포|말씀\s*:|설교\s*:|강해|본문\s*설교|메시지|Sermon|Message)/i.test(line) &&
-            !/(찬양|성가대|특송|봉헌)/.test(line)
-          ) {
-            const timeMatch = line.match(/(\d{1,2}:\d{2}(?::\d{2})?)/);
-            if (timeMatch) {
-              const sec = parseTimeString(timeMatch[1]);
-              if (sec > 0) {
-                detectedStartSec = sec;
-                startSource = 'description_timestamp';
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      // 3순위: 자동 자막(Caption Track)에서 예배 찬양/기도 이후 설교 시작 멘트 위치 탐색 (긴 영상인 경우)
-      if (detectedStartSec <= 0 && lengthSec >= 1200) {
-        const capMatch = html.match(/"captionTracks":\[\{"baseUrl":"([^"]+)"/);
-        if (capMatch && capMatch[1]) {
-          try {
-            const capUrl = capMatch[1].replace(/\\u0026/g, '&');
-            const capRes = await fetch(capUrl);
-            if (capRes.ok) {
-              const capXml = await capRes.text();
-              const textTagRegex = /<text start="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
-              let tm: RegExpExecArray | null;
-              const minSearchSec = lengthSec >= 2700 ? 600 : 120;
-              while ((tm = textTagRegex.exec(capXml)) !== null) {
-                const tSec = Math.floor(parseFloat(tm[1] || '0'));
-                if (tSec < minSearchSec) continue;
-                const txt = tm[2] || '';
-                if (
-                  /(오늘\s*하나님께서?\s*주시는\s*말씀|오늘\s*본문\s*말씀|함께\s*봉독|설교\s*제목|말씀을\s*나누겠습니다|할렐루야\s*옆\s*사람과\s*인사)/.test(
-                    txt
-                  )
-                ) {
-                  detectedStartSec = tSec;
-                  startSource = 'caption_analysis';
-                  break;
-                }
-              }
-            }
-          } catch {
-            // ignore caption fetch error
-          }
-        }
-      }
-
-      // 4순위: 영상 길이 & 예배 실황 키워드 기반 지능형 설교 시작점 추정 (00:00 처음부터 재생되는 현상 완전 방지!)
-      const isFullWorship = /(예배|실황|전체|1부|2부|3부|4부|대예배|주일낮|수요|금요)/.test(
-        videoTitle + ' ' + description
-      );
-      if (detectedStartSec <= 0) {
-        if (lengthSec >= 3600 || (isFullWorship && lengthSec === 0)) {
-          detectedStartSec = 1500; // 25분 00초 (전체 예배 평균 설교 등단 시점)
-          startSource = 'worship_heuristic_25m';
-        } else if (lengthSec >= 2400) {
-          detectedStartSec = 1080; // 18분 00초
-          startSource = 'worship_heuristic_18m';
-        } else if (lengthSec >= 600) {
-          detectedStartSec = 90; // 01분 30초 (단편 설교 영상 앞부분 인트로/타이틀/성경봉독 스킵)
-          startSource = 'sermon_clip_90s';
-        } else if (lengthSec > 90) {
-          detectedStartSec = 45; // 00분 45초
-          startSource = 'short_clip_45s';
-        }
-      }
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  if (detectedStartSec <= 0) {
-    const isWorshipTitle = /(예배|실황|전체|1부|2부|3부|대예배)/.test(videoTitle);
-    detectedStartSec = isWorshipTitle ? 1500 : 60;
-  }
-
-  const detectedScripture =
-    extractScriptureFromText(videoTitle) ||
-    extractScriptureFromText(description) ||
-    '';
-
-  return {
-    videoTitle,
-    channel,
-    description,
-    lengthSec,
-    thumbnailUrl,
-    detectedScripture,
-    detectedStartSec,
-    detectedStartTime: formatSecToMmSs(detectedStartSec),
-    startSource,
-  };
-};
-
 // API: 초기 설교 정보
 app.get('/api/sermon-info', (_req, res) => {
   res.json({ context: DEFAULT_SERMON_CONTEXT, success: true });
@@ -329,7 +100,7 @@ app.get('/api/lecture-info', (_req, res) => {
   res.json({ context: DEFAULT_SERMON_CONTEXT, success: true });
 });
 
-// API: 유튜브 메타정보 추출 (oEmbed + 성경 본문 + 설교 시작 시간 자동 감지)
+// API: 유튜브 메타정보 추출 (oEmbed + InnerTube 자막/챕터/설명란 기반 실제 설교 시작 시간 정밀 감지)
 app.post('/api/extract-youtube-info', async (req, res) => {
   try {
     const { url } = req.body;
@@ -338,7 +109,7 @@ app.post('/api/extract-youtube-info', async (req, res) => {
       return res.status(400).json({ error: '올바른 유튜브 링크가 아닙니다.' });
     }
 
-    const details = await fetchYoutubeDetails(videoId, url);
+    const details = await fetchYoutubeSermonDetails(videoId, url);
 
     return res.json({
       videoId,
@@ -347,8 +118,11 @@ app.post('/api/extract-youtube-info', async (req, res) => {
       scripture: details.detectedScripture,
       description: details.description.slice(0, 500),
       thumbnailUrl: details.thumbnailUrl,
+      lengthSec: details.lengthSec,
       detectedStartSec: details.detectedStartSec,
       detectedStartTime: details.detectedStartTime,
+      startSource: details.startSource,
+      startReasonLabel: details.startReasonLabel,
       success: true,
     });
   } catch (error: any) {
@@ -361,7 +135,8 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
   try {
     const {
       youtubeUrl,
-      startTime = '00:00',
+      startTime = '',
+      startTimeAuto = false,
       title = '',
       scripture = '',
       topic = '',
@@ -381,24 +156,33 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
       return res.status(400).json({ error: '유효한 유튜브 영상 링크(일반/라이브/쇼츠)를 입력해 주세요.' });
     }
 
-    // 유튜브 모드일 경우 실제 영상 제목, 채널명, 설명란, 성경 본문, 설교 시작 시간 자동 추출
+    // 유튜브 모드일 경우 실제 영상 제목, 채널명, 설명란, 성경 본문, 실제 설교 시작 시간 & 자막 자동 추출
     let ytDetails = {
       videoTitle: '',
       channel: '',
       description: '',
       lengthSec: 0,
       detectedScripture: '',
-      detectedStartSec: 15,
+      detectedStartSec: 0,
+      startSource: 'title_fallback',
+      startReasonLabel: '',
+      sermonTranscriptExcerpt: '',
     };
 
     if (!isFileMode) {
-      ytDetails = await fetchYoutubeDetails(videoId, youtubeUrl);
+      ytDetails = await fetchYoutubeSermonDetails(videoId, youtubeUrl);
     }
 
-    let startSec = parseTimeString(startTime);
-    if (startSec <= 0) {
-      startSec = isFileMode ? 15 : ytDetails.detectedStartSec;
+    const parsedManualSec = parseTimeStringToSec(startTime);
+    let startSec: number;
+    if (isFileMode) {
+      startSec = parsedManualSec !== null ? parsedManualSec : 0;
+    } else if (startTimeAuto || !String(startTime).trim() || startTime === 'auto') {
+      startSec = ytDetails.detectedStartSec;
+    } else {
+      startSec = parsedManualSec !== null ? parsedManualSec : ytDetails.detectedStartSec;
     }
+
     const startMin = Math.floor(startSec / 60);
     const startRemSec = startSec % 60;
     const startTimeLabel = `${String(startMin).padStart(2, '0')}분 ${String(startRemSec).padStart(2, '0')}초`;
@@ -440,8 +224,9 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
 - 설교 제목: ${resolvedTitle}
 - 성경 본문: ${resolvedScripture}
 - 주요 청중: ${targetAudience}
-- 설교 시작 시점: ${startTimeLabel} (${startSec}초)
-- 영상 설명/요약 텍스트: ${ytDetails.description ? ytDetails.description.slice(0, 1200) : '설교 제목 및 본문 기반 분석'}
+- 실제 설교 시작 시점: ${startTimeLabel} (${startSec}초)
+- 영상 설명 텍스트: ${ytDetails.description ? ytDetails.description.slice(0, 900) : '설교 제목 및 본문 기반 분석'}
+${ytDetails.sermonTranscriptExcerpt ? `- 실제 설교 음성 자막 발췌 (${startTimeLabel}~): ${ytDetails.sermonTranscriptExcerpt}` : ''}
 
 반드시 위 설교 제목("${resolvedTitle}")과 성경 본문("${resolvedScripture}")의 실제 내용에 꼭 맞는 맞춤형 분석 결과를 다음 JSON 구조로 반환해 주세요 (마크다운 없이 순수 JSON):
 {
@@ -659,16 +444,16 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
         hash = (hash * 31 + seedStr.charCodeAt(i)) >>> 0;
       }
 
-      const exegesisScore = 90 + (hash % 9);         // 90 ~ 98
-      const flowScore = 88 + ((hash >> 3) % 10);     // 88 ~ 97
-      const speechScore = 86 + ((hash >> 6) % 11);   // 86 ~ 96
-      const applyScore = 89 + ((hash >> 9) % 9);     // 89 ~ 97
-      const gospelScore = 91 + ((hash >> 12) % 8);   // 91 ~ 98
+      const exegesisScore = 90 + (hash % 9);          // 90 ~ 98
+      const flowScore = 88 + ((hash >>> 3) % 10);     // 88 ~ 97
+      const speechScore = 86 + ((hash >>> 6) % 11);   // 86 ~ 96
+      const applyScore = 89 + ((hash >>> 9) % 9);     // 89 ~ 97
+      const gospelScore = 91 + ((hash >>> 12) % 8);   // 91 ~ 98
       const avgScore = Math.round((exegesisScore + flowScore + speechScore + applyScore + gospelScore) / 5);
 
-      const eyeScore = 80 + ((hash >> 4) % 15);
-      const gestureScore = 79 + ((hash >> 7) % 16);
-      const vocalScore = 85 + ((hash >> 10) % 12);
+      const eyeScore = 80 + ((hash >>> 4) % 15);
+      const gestureScore = 79 + ((hash >>> 7) % 16);
+      const vocalScore = 85 + ((hash >>> 10) % 12);
       const paces = ['안정적(적절)', '차분하고 명료함', '열정적(다소 빠름)', '완급 조절 우수'] as const;
       const selectedPace = paces[hash % paces.length];
 
@@ -753,9 +538,9 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
       ];
 
       const fItem = fillerPool[hash % fillerPool.length];
-      const gItem = gesturePool[(hash >> 2) % gesturePool.length];
-      const zItem = gazePool[(hash >> 4) % gazePool.length];
-      const tItem = ticPool[(hash >> 6) % ticPool.length];
+      const gItem = gesturePool[(hash >>> 2) % gesturePool.length];
+      const zItem = gazePool[(hash >>> 4) % gazePool.length];
+      const tItem = ticPool[(hash >>> 6) % ticPool.length];
 
       analysisResult = {
         summary: `${resolvedChurch} ${resolvedPreacher}님의 설교 「${resolvedTitle}」(${resolvedScripture})은 본문의 신학적 중심 주제를 오늘날 ${targetAudience}의 실존적 고민과 긴밀하게 연결한 깊이 있는 메시지입니다. ${descSnippet} 특히 ${startTimeLabel}부터 시작된 본문 강해와 복음적 권면이 조화를 이루었으며, 제시된 스피치 호흡과 시선 배분 포인트를 보완하시면 전달력이 한층 더 극대화될 것입니다.`,

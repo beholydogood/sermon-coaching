@@ -142,7 +142,9 @@ export default function App() {
     setSermons(updated);
     setActiveSermon(newSermon);
     setActiveMainTab('feedback');
-    setCurrentTimestamp(newSermon.meta.startTimeSec || 15);
+    setCurrentTimestamp(
+      typeof newSermon.meta.startTimeSec === 'number' ? newSermon.meta.startTimeSec : 0
+    );
     setAnalyzeBannerMsg(
       `✨ 「${newSermon.meta.sermonTitle}」 (${newSermon.meta.scriptureRef}) 설교 정밀 코칭 분석이 완료되어 아카이브에 누적 저장되었습니다! (종합 ${newSermon.averageScore}점)`
     );
@@ -178,9 +180,9 @@ export default function App() {
   const handleUpdateYoutubeId = (newId: string, detectedStartSec?: number) => {
     if (!activeSermon) return;
     const nextStartSec =
-      typeof detectedStartSec === 'number' && detectedStartSec > 0
+      typeof detectedStartSec === 'number' && detectedStartSec >= 0
         ? detectedStartSec
-        : activeSermon.meta.startTimeSec || 15;
+        : activeSermon.meta.startTimeSec ?? 0;
     const startMin = Math.floor(nextStartSec / 60);
     const startRemSec = nextStartSec % 60;
     const updated = {

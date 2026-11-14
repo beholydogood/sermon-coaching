@@ -85,15 +85,15 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
   const hasEnforcedInitialStartRef = useRef<boolean>(false);
   const targetStartSecRef = useRef<number>(0);
 
-  // 설교 시작 지점(초): meta.startTimeSec 우선, 없으면 첫 타임라인 구간 또는 60초(인트로 스킵)
+  // 설교 시작 지점(초): meta.startTimeSec(0초 포함) 우선, 없으면 첫 타임라인 구간 또는 0초
   const sermonStartSec =
-    meta.startTimeSec && meta.startTimeSec > 0
+    typeof meta.startTimeSec === 'number' && meta.startTimeSec >= 0
       ? meta.startTimeSec
-      : timeline && timeline.length > 0 && timeline[0].seconds > 0
+      : timeline && timeline.length > 0 && typeof timeline[0].seconds === 'number'
       ? timeline[0].seconds
-      : 60;
+      : 0;
 
-  // 현재 재생 타깃 시점: 0초일 경우 무조건 설교 시작 부분(sermonStartSec)으로 강제 지정
+  // 현재 재생 타깃 시점: 외부 타임라인 클릭(currentTimestamp > 0)이 있으면 해당 위치, 아니면 실제 설교 시작점(sermonStartSec)
   const effectiveStartSec = Math.floor(
     currentTimestamp > 0 ? currentTimestamp : sermonStartSec
   );
@@ -390,15 +390,14 @@ export const VideoPlayerSection: React.FC<VideoPlayerSectionProps> = ({
             <span>예배 앞부분 건너뛰기(시작점 변경):</span>
           </span>
           {[
+            { label: '00:00', sec: 0 },
             { label: '01:00', sec: 60 },
-            { label: '03:00', sec: 180 },
             { label: '10:00', sec: 600 },
-            { label: '18:00', sec: 1080 },
-            { label: '25:00 (예배실황)', sec: 1500 },
+            { label: '20:00', sec: 1200 },
             { label: '30:00', sec: 1800 },
-            { label: '35:00', sec: 2100 },
+            { label: '40:00', sec: 2400 },
           ].map((preset) => {
-            const isCurrent = Math.abs(sermonStartSec - preset.sec) < 5;
+            const isCurrent = Math.abs(sermonStartSec - preset.sec) < 3;
             return (
               <button
                 key={preset.sec}

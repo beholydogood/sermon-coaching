@@ -3,17 +3,14 @@ import {
   X,
   Youtube,
   Clock,
-  BookOpen,
-  User,
-  Building2,
   Sparkles,
   Loader2,
   Check,
   AlertCircle,
-  Users,
   Upload,
   Video,
   FileVideo,
+  Search,
 } from 'lucide-react';
 import { SermonRecord } from '../types/sermon';
 import {
@@ -42,26 +39,35 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoFilePreviewUrl, setVideoFilePreviewUrl] = useState<string | null>(null);
 
-  const [startTime, setStartTime] = useState('00:00');
+  const [startTime, setStartTime] = useState('');
+  const [isManualStart, setIsManualStart] = useState(false);
+  const [startReasonLabel, setStartReasonLabel] = useState<string | null>(null);
+
   const [title, setTitle] = useState('');
   const [scripture, setScripture] = useState('');
   const [preacher, setPreacher] = useState(defaultPreacher || '이은혜 목사');
   const [churchName, setChurchName] = useState(defaultChurchName || '은혜의빛교회');
   const [targetAudience, setTargetAudience] = useState('삶의 고난 속에서 위로와 믿음의 결단을 바라는 성도');
 
-  useEffect(() => {
-    if (defaultPreacher) setPreacher(defaultPreacher);
-    if (defaultChurchName) setChurchName(defaultChurchName);
-  }, [defaultPreacher, defaultChurchName, isOpen]);
-
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
-  const [extractedInfo, setExtractedInfo] = useState<{ title?: string; channel?: string; thumb?: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastAutoExtractedVideoIdRef = useRef<string | null>(null);
 
-  if (!isOpen) return null;
+  // 모달이 열릴 때마다 이전 설교의 시작 시간(예: 25:00 등)이 남아있지 않도록 깨끗하게 초기화
+  useEffect(() => {
+    if (isOpen) {
+      setStartTime('');
+      setIsManualStart(false);
+      setStartReasonLabel(null);
+      setErrorMsg(null);
+      lastAutoExtractedVideoIdRef.current = null;
+      if (defaultPreacher) setPreacher(defaultPreacher);
+      if (defaultChurchName) setChurchName(defaultChurchName);
+    }
+  }, [defaultPreacher, defaultChurchName, isOpen]);
 
   // 유튜브 URL 내 시작 시간 파라미터(?t=1250, &t=20m15s, &start=900 등) 즉시 추출 헬퍼
   const extractStartTimeFromUrl = (rawUrl: string): string | null => {
@@ -88,8 +94,11 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
     return null;
   };
 
-  // 유튜브 URL 입력 시 제목 & 채널 자동 추출
-  const handleAutoExtract = async (urlToExtract?: string) => {
+  // 유튜브 URL 입력 시 실제 설교 시작 시점(자막/챕터/설명란 분석) & 제목 & 본문 자동 추출
+  const handleAutoExtract = async (
+    urlToExtract?: string,
+    options?: { forceStartOverride?: boolean }
+  ) => {
     const targetUrl = (typeof urlToExtract === 'string' ? urlToExtract : youtubeUrl).trim();
     if (!targetUrl) {
       setErrorMsg('유튜브 설교 영상 주소를 입력해 주세요.');
@@ -108,11 +117,6 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
       if (data.success) {
         const autoScripture =
           data.scripture || detectScriptureFromTitle(data.title || '');
-        setExtractedInfo({
-          title: data.title,
-          channel: data.channel,
-          thumb: data.thumbnailUrl,
-        });
 
         if (data.title) {
           setTitle(data.title);
@@ -123,25 +127,62 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
         if (data.channel && (!churchName || churchName === '은혜의빛교회')) {
           setChurchName(data.channel);
         }
-        if (data.detectedStartTime) {
+        if (
+          typeof data.detectedStartTime === 'string' &&
+          (options?.forceStartOverride || !isManualStart)
+        ) {
           setStartTime(data.detectedStartTime);
+          setIsManualStart(false);
+          setStartReasonLabel(
+            data.startReasonLabel ||
+              `실제 설교 시작 시점(${data.detectedStartTime})이 자동 감지되었습니다.`
+          );
         }
         return {
           title: data.title || '',
           scripture: autoScripture || '',
           channel: data.channel || '',
-          detectedStartTime: data.detectedStartTime || '',
+          detectedStartTime: data.detectedStartTime || '00:00',
+          detectedStartSec:
+            typeof data.detectedStartSec === 'number' ? data.detectedStartSec : 0,
         };
       } else {
         setErrorMsg('영상 정보를 가져오지 못했습니다. 링크를 확인해 주세요.');
       }
-    } catch (e: any) {
+    } catch {
       setErrorMsg('영상 정보를 불러오는 중 네트워크 오류가 발생했습니다.');
     } finally {
       setExtracting(false);
     }
     return null;
   };
+
+  // 유튜브 링크를 붙여넣으면 별도로 버튼을 누르지 않아도 즉시 실제 설교 시작 시간을 자동 탐색!
+  useEffect(() => {
+    if (!isOpen || sourceMode !== 'youtube') return;
+    const trimmed = youtubeUrl.trim();
+    const vid = parseYoutubeVideoId(trimmed);
+    if (!vid) {
+      lastAutoExtractedVideoIdRef.current = null;
+      return;
+    }
+    if (lastAutoExtractedVideoIdRef.current === vid) return;
+
+    const timer = setTimeout(() => {
+      lastAutoExtractedVideoIdRef.current = vid;
+      const urlStart = extractStartTimeFromUrl(trimmed);
+      if (urlStart) {
+        setStartTime(urlStart);
+        setIsManualStart(true);
+        setStartReasonLabel(`링크에 포함된 시작 시간(${urlStart})이 적용되었습니다.`);
+      }
+      handleAutoExtract(trimmed, { forceStartOverride: !urlStart });
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [youtubeUrl, isOpen, sourceMode]);
+
+  if (!isOpen) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -150,7 +191,6 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
       const url = URL.createObjectURL(file);
       setVideoFilePreviewUrl(url);
 
-      // 파일명 기반 제목 & 성경 본문 자동 추천
       const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
       if (!title) {
         setTitle(cleanName);
@@ -160,16 +200,14 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
         setScripture(detectedScripture);
       }
 
-      // 업로드 영상 길이를 분석하여 전체 예배 영상(50분 이상)이면 설교 시작점(22:00), 설교 단편이면 인트로 이후(00:15)로 자동 설정
       const tempVideo = document.createElement('video');
       tempVideo.preload = 'metadata';
       tempVideo.onloadedmetadata = () => {
-        if (startTime === '00:00') {
-          if (tempVideo.duration >= 3000) {
-            setStartTime('22:00');
-          } else if (tempVideo.duration > 30) {
-            setStartTime('00:15');
-          }
+        if (!isManualStart) {
+          setStartTime('00:00');
+          setStartReasonLabel(
+            `업로드된 영상 파일(${Math.floor(tempVideo.duration / 60)}분) 처음부터 재생합니다. 필요시 시작 시점을 입력해 주세요.`
+          );
         }
       };
       tempVideo.src = url;
@@ -193,15 +231,17 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
     try {
       let currentTitle = title.trim();
       let currentScripture = scripture.trim();
-      let currentStartTime = startTime;
+      let currentStartTime = startTime.trim();
 
-      // 유튜브 모드에서 제목을 비워두었거나 시작 시점이 00:00(미지정)인 경우 유튜브 챕터/설명란/자막에서 설교 시작 시점 자동 감지!
-      if (sourceMode === 'youtube' && (!currentTitle || currentStartTime === '00:00')) {
-        const extracted = await handleAutoExtract(youtubeUrl.trim());
+      // 아직 자동 감지가 완료되지 않은 상태에서 바로 제출한 경우 즉시 실제 설교 시작 시점 추출
+      if (sourceMode === 'youtube' && (!currentTitle || (!isManualStart && !currentStartTime))) {
+        const extracted = await handleAutoExtract(youtubeUrl.trim(), {
+          forceStartOverride: !isManualStart,
+        });
         if (extracted) {
           if (!currentTitle && extracted.title) currentTitle = extracted.title;
           if (extracted.scripture && !currentScripture) currentScripture = extracted.scripture;
-          if (extracted.detectedStartTime && currentStartTime === '00:00') {
+          if (!isManualStart && extracted.detectedStartTime) {
             currentStartTime = extracted.detectedStartTime;
           }
         }
@@ -221,6 +261,7 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
           const payload: any = {
             youtubeUrl: youtubeUrl.trim(),
             startTime: currentStartTime,
+            startTimeAuto: !isManualStart,
             title: currentTitle,
             scripture: currentScripture,
             preacher: resolvedPreacher,
@@ -238,7 +279,6 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
           const data = await response.json();
           if (data.success && (data.sermonData || data.lectureData)) {
             const candidate: SermonRecord = data.sermonData || data.lectureData;
-            // 구버전 서버의 고정 템플릿("오케스트라" / "조각목")인지 확인 후 맞춤형 분석으로 업그레이드
             const isLegacyStaticTemplate =
               candidate.timeline?.some((t) => t.title.includes('오케스트라') || t.title.includes('조각목'));
 
@@ -251,12 +291,11 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
         }
       }
 
-      // 로컬 파일 업로드이거나 맞춤형 분석이 필요한 경우 해당 설교 전용 분석 리포트 생성
       if (!finalRecord) {
         finalRecord = buildTailoredSermonRecord({
           youtubeUrl: youtubeUrl.trim(),
           videoId: parseYoutubeVideoId(youtubeUrl.trim()) || undefined,
-          startTime: currentStartTime,
+          startTime: currentStartTime || '00:00',
           title: currentTitle,
           scripture: currentScripture,
           preacher: resolvedPreacher,
@@ -268,19 +307,21 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
         });
       }
 
-      // 파일 모드인 경우 로컬 blob URL 보존
       if (sourceMode === 'file' && videoFilePreviewUrl) {
         finalRecord.meta.videoSourceType = 'file';
         finalRecord.meta.videoFileUrl = videoFilePreviewUrl;
         finalRecord.meta.videoFileName = videoFile?.name;
       }
 
-      // 다음 등록을 위해 입력 폼 초기화
+      // 다음 등록을 위해 입력 폼 및 시작 시간 완전 초기화
       setYoutubeUrl('');
+      setStartTime('');
+      setIsManualStart(false);
+      setStartReasonLabel(null);
+      lastAutoExtractedVideoIdRef.current = null;
       setTitle('');
       setScripture('');
       setVideoFile(null);
-      setExtractedInfo(null);
 
       onSermonAnalyzed(finalRecord);
       onClose();
@@ -309,7 +350,7 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                유튜브 링크 또는 영상 파일을 등록하면 지난 분석 데이터와 누적되어 아카이빙됩니다.
+                유튜브 링크를 붙여넣으면 찬양·기도·성가대를 구분해 실제 설교 시작 시점을 자동으로 찾아냅니다.
               </p>
             </div>
           </div>
@@ -375,26 +416,35 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
                   onChange={(e) => {
                     const val = e.target.value;
                     setYoutubeUrl(val);
-                    const urlStart = extractStartTimeFromUrl(val);
-                    if (urlStart) {
-                      setStartTime(urlStart);
-                    }
+                    setIsManualStart(false);
+                    setStartReasonLabel(null);
+                    setStartTime('');
                   }}
-                  placeholder="예: https://www.youtube.com/watch?v=... (시작시간 포함 링크도 지원)"
+                  placeholder="예: https://www.youtube.com/watch?v=... (링크 붙여넣기 시 설교 시작점 자동 탐색)"
                   className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 text-xs focus:outline-hidden focus:border-indigo-400"
                   required={sourceMode === 'youtube'}
                 />
                 <button
                   type="button"
-                  onClick={() => handleAutoExtract()}
+                  onClick={() => handleAutoExtract(youtubeUrl, { forceStartOverride: true })}
                   disabled={extracting}
-                  className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-indigo-300 font-semibold text-xs whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-indigo-300 font-semibold text-xs whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                 >
-                  {extracting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '정보 가져오기'}
+                  {extracting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>설교 시점 분석 중...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Search className="w-3.5 h-3.5" />
+                      <span>설교 시작점 찾기</span>
+                    </>
+                  )}
                 </button>
               </div>
               <p className="text-[11px] text-slate-400 mt-1">
-                링크 입력 후 [정보 가져오기]를 누르면 설교 제목과 교회명이 자동 인식됩니다.
+                유튜브 주소를 붙여넣으면 영상의 챕터·예배순서·음성 자막을 분석하여 실제 설교 시작 시간과 본문이 자동 입력됩니다.
               </p>
             </div>
           )}
@@ -433,45 +483,58 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
             </div>
           )}
 
-          {/* 설교 시작 시점 (찬양/광고 건너뛰기) */}
-          <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/80 space-y-2">
-            <label className="block text-xs font-semibold text-amber-300 flex items-center gap-1.5">
-              <Clock className="w-4 h-4 text-amber-400" />
-              <span>실제 설교 시작 시점 (예배 찬양/기도/광고 구간 건너뛰기)</span>
-            </label>
-            <div className="flex items-center gap-2 flex-wrap">
+          {/* 실제 설교 시작 시점 (AI 자막/챕터 자동 탐지 + 수동 미세조정 지원) */}
+          <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/80 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <label className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-amber-400" />
+                <span>실제 설교 시작 시점 (찬양·기도·성가대 이후 실제 말씀 시작 시간)</span>
+              </label>
+              {sourceMode === 'youtube' && youtubeUrl.trim() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsManualStart(false);
+                    handleAutoExtract(youtubeUrl, { forceStartOverride: true });
+                  }}
+                  disabled={extracting}
+                  className="text-[11px] text-emerald-300 hover:text-emerald-200 underline cursor-pointer disabled:opacity-50"
+                >
+                  자동 감지 다시 실행
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2.5 flex-wrap">
               <input
                 type="text"
                 value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                placeholder="예: 20:00 또는 00:15"
-                className="w-36 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:outline-hidden focus:border-amber-400"
+                onChange={(e) => {
+                  setStartTime(e.target.value);
+                  setIsManualStart(true);
+                  setStartReasonLabel('직접 입력한 설교 시작 시점으로 재생됩니다.');
+                }}
+                placeholder={extracting ? '탐색 중...' : '자동 감지 (예: 00:00, 31:20)'}
+                className="w-44 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:outline-hidden focus:border-amber-400"
               />
-              <div className="flex items-center gap-1 flex-wrap">
-                {[
-                  { label: '00:15 (단편설교)', val: '00:15' },
-                  { label: '15:00', val: '15:00' },
-                  { label: '20:00 (예배실황)', val: '20:00' },
-                  { label: '25:00', val: '25:00' },
-                  { label: '30:00', val: '30:00' },
-                ].map((preset) => (
-                  <button
-                    key={preset.val}
-                    type="button"
-                    onClick={() => setStartTime(preset.val)}
-                    className={`px-2 py-1 rounded-lg text-[11px] font-mono border transition-colors cursor-pointer ${
-                      startTime === preset.val
-                        ? 'bg-amber-500 text-slate-950 font-extrabold border-amber-400'
-                        : 'bg-slate-900 hover:bg-slate-700 text-slate-300 border-slate-700'
-                    }`}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
+
+              {extracting && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-[11px] text-indigo-200 font-medium">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                  <span>영상 자막·챕터에서 실제 설교 시작 시점을 찾는 중...</span>
+                </span>
+              )}
+
+              {!extracting && startReasonLabel && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/70 border border-emerald-500/40 text-[11px] text-emerald-200 font-medium">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>{startReasonLabel}</span>
+                </span>
+              )}
             </div>
+
             <p className="text-[11px] text-slate-400">
-              전체 예배 영상인 경우 목사님 등단 시점(예: 20:00, 25:00)을 선택하면 설교 시작 부분부터 즉시 재생됩니다.
+              단편 설교 영상은 말씀이 바로 시작되는 지점(예: 00:00~00:10)으로, 전체 예배 영상은 찬양·기도·찬양대가 끝난 실제 등단 시점(예: 23:40, 38:15, 44:55 등)으로 자동 설정됩니다. 직접 수정도 가능합니다.
             </p>
           </div>
 
@@ -539,7 +602,7 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || extracting}
               style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
               className="w-full py-3 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs border border-amber-300 shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
             >

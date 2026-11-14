@@ -59,11 +59,12 @@ export const buildTailoredSermonRecord = (params: AnalyzeInputParams): SermonRec
     ? `file-${Date.now().toString(36)}`
     : params.videoId || parseYoutubeVideoId(params.youtubeUrl || '') || 'l5g3WzB5l2g';
 
-  let startSec = parseStartTimeToSec(params.startTime || '00:00');
-  if (startSec <= 0) {
-    const isWorship = /(예배|실황|전체|1부|2부|3부|4부|대예배)/.test(params.title || '');
-    startSec = isWorship ? 1500 : 90;
-  }
+  const hasExplicitStart = Boolean(params.startTime && String(params.startTime).trim() !== '');
+  let startSec = hasExplicitStart
+    ? parseStartTimeToSec(params.startTime || '00:00')
+    : /(전체\s*예배|예배\s*실황|풀\s*영상)/.test(params.title || '')
+    ? 1200
+    : 0;
   const startMin = Math.floor(startSec / 60);
   const startRemSec = startSec % 60;
   const startTimeLabel = `${String(startMin).padStart(2, '0')}분 ${String(startRemSec).padStart(2, '0')}초`;
@@ -93,18 +94,18 @@ export const buildTailoredSermonRecord = (params: AnalyzeInputParams): SermonRec
     hash = (hash * 31 + seedStr.charCodeAt(i)) >>> 0;
   }
 
-  const exegesisScore = 89 + (hash % 10);        // 89 ~ 98
-  const flowScore = 88 + ((hash >> 3) % 10);     // 88 ~ 97
-  const speechScore = 85 + ((hash >> 6) % 12);   // 85 ~ 96
-  const applyScore = 88 + ((hash >> 9) % 10);    // 88 ~ 97
-  const gospelScore = 90 + ((hash >> 12) % 9);   // 90 ~ 98
+  const exegesisScore = 89 + (hash % 10);         // 89 ~ 98
+  const flowScore = 88 + ((hash >>> 3) % 10);     // 88 ~ 97
+  const speechScore = 85 + ((hash >>> 6) % 12);   // 85 ~ 96
+  const applyScore = 88 + ((hash >>> 9) % 10);    // 88 ~ 97
+  const gospelScore = 90 + ((hash >>> 12) % 9);   // 90 ~ 98
   const avgScore = Math.round(
     (exegesisScore + flowScore + speechScore + applyScore + gospelScore) / 5
   );
 
-  const eyeScore = 79 + ((hash >> 4) % 16);
-  const gestureScore = 78 + ((hash >> 7) % 17);
-  const vocalScore = 84 + ((hash >> 10) % 13);
+  const eyeScore = 79 + ((hash >>> 4) % 16);
+  const gestureScore = 78 + ((hash >>> 7) % 17);
+  const vocalScore = 84 + ((hash >>> 10) % 13);
   const paces = ['안정적(적절)', '차분하고 명료함', '열정적(다소 빠름)', '완급 조절 우수'] as const;
   const selectedPace = paces[hash % paces.length];
 
@@ -181,9 +182,9 @@ export const buildTailoredSermonRecord = (params: AnalyzeInputParams): SermonRec
   ];
 
   const fItem = fillerPool[hash % fillerPool.length];
-  const gItem = gesturePool[(hash >> 2) % gesturePool.length];
-  const zItem = gazePool[(hash >> 4) % gazePool.length];
-  const tItem = ticPool[(hash >> 6) % ticPool.length];
+  const gItem = gesturePool[(hash >>> 2) % gesturePool.length];
+  const zItem = gazePool[(hash >>> 4) % gazePool.length];
+  const tItem = ticPool[(hash >>> 6) % ticPool.length];
 
   const sermonId = `sermon-${Date.now()}`;
 
