@@ -11,6 +11,8 @@ import {
   ArrowUpCircle,
   Edit3,
   X,
+  Bell,
+  KeyRound,
 } from 'lucide-react';
 import { SermonMeta, DeviceAuthInfo, AppReleaseInfo } from '../types/sermon';
 import {
@@ -18,6 +20,7 @@ import {
   setPersonalGeminiApiKey,
   hasPersonalGeminiApiKey,
 } from '../utils/auth';
+import { NoticeBoardModal } from './NoticeBoardModal';
 
 interface SermonHeaderProps {
   onPlayFromStart: () => void;
@@ -53,6 +56,7 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
 
   // 이름 / 교회 / 개인 AI 키 수정 모달 상태
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isNoticeBoardOpen, setIsNoticeBoardOpen] = useState(false);
   const [editPastorName, setEditPastorName] = useState('');
   const [editChurchName, setEditChurchName] = useState('');
   const [editPersonalKey, setEditPersonalKey] = useState('');
@@ -224,9 +228,36 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
             </div>
           </div>
 
-          {/* 우측 퀵 컨트롤 버튼들: 사이드바 -> 새 설교 등록 & 코칭 -> 책 집필 스튜디오 -> 앱 설치 */}
+          {/* 우측 퀵 컨트롤 버튼들 */}
           <div className="flex items-center space-x-2 flex-wrap gap-y-2">
-            {/* 1. 사이드바 버튼 */}
+            {/* 1. 📢 공지 & 업데이트 버튼 (항상 최상단 노출) */}
+            <button
+              onClick={() => setIsNoticeBoardOpen(true)}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 text-xs font-bold border border-indigo-400/50 shadow-md shadow-indigo-950/40 transition-all cursor-pointer active:scale-95"
+              title="공지사항, 최신 기능 업데이트 내역 확인 및 최신 버전 즉시 새로고침"
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+              <span>공지</span>
+              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-400 text-slate-950 tracking-tight leading-none">
+                NEW
+              </span>
+            </button>
+
+            {/* 2. 🔑 개인 AI 키 버튼 (직접 클릭 가능) */}
+            <button
+              onClick={openProfileEditor}
+              className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer active:scale-95 ${
+                hasKey
+                  ? 'bg-slate-800 hover:bg-slate-750 text-emerald-300 border-emerald-500/40 shadow-sm'
+                  : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-400/50 shadow-md shadow-amber-500/20'
+              }`}
+              title="Google Gemini 개인 API 키(무료) 등록 및 연결 상태 확인"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>{hasKey ? '개인 AI 키: 연결됨' : '🔑 개인 AI 키 등록'}</span>
+            </button>
+
+            {/* 3. 사이드바 버튼 */}
             {onToggleSidebar && (
               <button
                 onClick={onToggleSidebar}
@@ -238,7 +269,7 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
               </button>
             )}
 
-            {/* 2. 새 설교 등록 & 코칭 (사이드바와 책 집필 스튜디오 사이 배치) */}
+            {/* 4. 새 설교 등록 & 코칭 (사이드바와 책 집필 스튜디오 사이 배치) */}
             <button
               onClick={onOpenAnalyzeModal}
               style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
@@ -249,7 +280,7 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
               <span>새 설교 등록 &amp; 코칭</span>
             </button>
 
-            {/* 3. 책 집필 스튜디오 버튼 */}
+            {/* 5. 책 집필 스튜디오 버튼 */}
             {onOpenBookStudio && (
               <button
                 onClick={onOpenBookStudio}
@@ -262,7 +293,7 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
               </button>
             )}
 
-            {/* 4. 기기 앱 설치 PWA */}
+            {/* 6. 기기 앱 설치 PWA */}
             {!isInstalled && (
               <button
                 onClick={handleInstallPwa}
@@ -280,7 +311,7 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
       {/* ─── 이름 및 소속 교회 수정 모달 ─── */}
       {isEditingProfile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-5 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-5 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
               <div className="flex items-center gap-2">
                 <Church className="w-4 h-4 text-indigo-400" />
@@ -390,6 +421,13 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
           </div>
         </div>
       )}
+
+      {/* ─── 📢 공지 & 업데이트 모달 ─── */}
+      <NoticeBoardModal
+        isOpen={isNoticeBoardOpen}
+        onClose={() => setIsNoticeBoardOpen(false)}
+        onOpenKeySettings={openProfileEditor}
+      />
     </header>
   );
 };
