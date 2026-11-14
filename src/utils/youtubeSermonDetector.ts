@@ -22,6 +22,7 @@ export interface YoutubeSermonDetails {
     | 'title_fallback';
   startReasonLabel: string;
   sermonTranscriptExcerpt: string;
+  transcriptLines: TranscriptLine[];
 }
 
 const BIBLE_BOOKS_PATTERN =
@@ -652,5 +653,6 @@ export async function fetchYoutubeSermonDetails(
     startSource,
     startReasonLabel,
     sermonTranscriptExcerpt,
+    transcriptLines,
   };
 }

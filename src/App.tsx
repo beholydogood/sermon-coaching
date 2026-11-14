@@ -15,6 +15,7 @@ import { AdminAppPage } from './components/AdminAppPage';
 import {
   getAllArchivedSermons,
   saveSermonToArchive,
+  saveSermonWithVerification,
   deleteSermonFromArchive,
   updateAllSermonsProfile,
 } from './utils/sermonStorage';
@@ -171,18 +172,35 @@ export default function App() {
   };
 
   const handleSermonAnalyzed = (newSermon: SermonRecord) => {
-    const updated = saveSermonToArchive(newSermon);
+    const { saved, sermons: updated, error } = saveSermonWithVerification(newSermon);
     setSermons(updated);
-    setActiveSermon(newSermon);
+    const active = updated.find((s) => s.meta.id === newSermon.meta.id) || newSermon;
+    setActiveSermon(active);
     setActiveMainTab('homiletics');
     setCurrentTimestamp(
-      typeof newSermon.meta.startTimeSec === 'number' ? newSermon.meta.startTimeSec : 0
+      typeof active.meta.startTimeSec === 'number' ? active.meta.startTimeSec : 0
     );
-    setAnalyzeBannerMsg(
-      `✨ 「${newSermon.meta.sermonTitle}」 (${newSermon.meta.scriptureRef}) 설교 정밀 코칭 분석이 완료되어 아카이브에 누적 저장되었습니다! (종합 ${newSermon.averageScore}점)`
-    );
+    if (saved) {
+      setAnalyzeBannerMsg(
+        `✨ 「${active.meta.sermonTitle}」 (${active.meta.scriptureRef}) 설교 정밀 코칭 분석이 완료되어 아카이브에 누적 저장되었습니다!`
+      );
+    } else {
+      setAnalyzeBannerMsg(
+        `⚠️ 「${active.meta.sermonTitle}」 분석 결과는 화면에 표시되었으나 저장소 기록에 실패했습니다: ${error || '저장 오류'}`
+      );
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setTimeout(() => setAnalyzeBannerMsg(null), 6000);
+  };
+
+  const handleUpdateSermonRecord = (
+    updatedSermon: SermonRecord
+  ): { saved: boolean; error?: string } => {
+    const { saved, sermons: updatedList, error } = saveSermonWithVerification(updatedSermon);
+    setSermons(updatedList);
+    const matched = updatedList.find((s) => s.meta.id === updatedSermon.meta.id) || updatedSermon;
+    setActiveSermon(matched);
+    return { saved, error };
   };
 
   const handleSelectSermon = (sermon: SermonRecord) => {
@@ -435,6 +453,8 @@ export default function App() {
                 <FeedbackDashboard
                   key={`${activeSermon.meta.id}-speech`}
                   sermon={activeSermon}
+                  allSermons={sermons}
+                  onUpdateSermonRecord={handleUpdateSermonRecord}
                   onJumpToTimestamp={handleJumpToTimestamp}
                   section="speech"
                 />

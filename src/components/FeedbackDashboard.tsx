@@ -7,12 +7,16 @@ import { SpeechHabitsCoach } from './SpeechHabitsCoach';
 
 interface FeedbackDashboardProps {
   sermon: SermonRecord;
+  allSermons?: SermonRecord[];
+  onUpdateSermonRecord?: (updated: SermonRecord) => { saved: boolean; error?: string };
   onJumpToTimestamp: (seconds: number) => void;
   section?: 'homiletics' | 'speech' | 'application';
 }
 
 export const FeedbackDashboard: React.FC<FeedbackDashboardProps> = ({
   sermon,
+  allSermons = [],
+  onUpdateSermonRecord,
   onJumpToTimestamp,
   section = 'homiletics',
 }) => {
@@ -80,7 +84,10 @@ export const FeedbackDashboard: React.FC<FeedbackDashboardProps> = ({
       {/* 2. 스피치 딜리버리 & 보컬 코칭 ('🎙️ 스피치 & 바디랭귀지 코칭' 내용) */}
       {section === 'speech' && speechCoaching && (
         <SpeechHabitsCoach
+          sermon={sermon}
+          allSermons={allSermons}
           speechData={speechCoaching}
+          onUpdateSermonRecord={onUpdateSermonRecord}
           onJumpToTimestamp={onJumpToTimestamp}
         />
       )}

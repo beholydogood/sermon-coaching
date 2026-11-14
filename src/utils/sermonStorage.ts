@@ -1,13 +1,69 @@
 import { SermonRecord } from '../types/sermon';
 import { INITIAL_SERMON_LIST, SAMPLE_SERMON_1 } from '../data/sermonData';
 import { getDeviceAuthInfo } from './auth';
+import { buildSpeechCoachingV13Data } from './speechCoachingEngineV13';
 
 const ARCHIVE_STORAGE_KEY = 'sermon_coaching_archive_v2';
 
+const ensureV13SpeechCoaching = (
+  sermon: SermonRecord,
+  allSermons: SermonRecord[],
+  ownerKey: string
+): SermonRecord => {
+  const isSample =
+    Boolean(sermon.meta.isSampleData) || sermon.meta.id.startsWith('sermon-sample-');
+
+  if (sermon.speechCoaching?.v13) {
+    return {
+      ...sermon,
+      meta: {
+        ...sermon.meta,
+        isSampleData: isSample,
+        userOwnerKey: sermon.meta.userOwnerKey || ownerKey,
+      },
+    };
+  }
+
+  const { v13 } = buildSpeechCoachingV13Data({
+    videoId: sermon.meta.youtubeId || sermon.meta.id,
+    sermonTitle: sermon.meta.sermonTitle,
+    scriptureRef: sermon.meta.scriptureRef,
+    preacherName: sermon.meta.preacher,
+    churchName: sermon.meta.churchName,
+    targetAudienceText: sermon.meta.targetAudience,
+    originalDurationSec: (sermon.meta.startTimeSec || 0) + 1800,
+    detectedStartSec: sermon.meta.startTimeSec || 0,
+    startSource: 'title_fallback',
+    startReasonLabel: isSample
+      ? '개발·시연용 예시 데이터 (실제 사용자 분석 기록과 분리됨)'
+      : `설정된 설교 시작 시점 (${sermon.meta.startTimeLabel})`,
+    transcriptLines: [],
+    isDemoSample: isSample,
+    aiModelConnected: false,
+    continuousVideoAccess: false,
+    audioAccess: false,
+    previousRecords: allSermons.filter((x) => x.meta.id !== sermon.meta.id),
+  });
+
+  return {
+    ...sermon,
+    meta: {
+      ...sermon.meta,
+      isSampleData: isSample,
+      userOwnerKey: sermon.meta.userOwnerKey || ownerKey,
+    },
+    speechCoaching: {
+      ...sermon.speechCoaching,
+      v13,
+    },
+  };
+};
+
 const applyAuthProfileToSermons = (sermons: SermonRecord[]): SermonRecord[] => {
   const auth = getDeviceAuthInfo();
+  const ownerKey = `${auth.licenseKey || 'local'}_${auth.pastorName || 'pastor'}`;
 
-  return sermons.map((s) => {
+  const mapped = sermons.map((s) => {
     const isDefaultPreacher =
       !s.meta.preacher ||
       s.meta.preacher === '이은혜 목사' ||
@@ -15,6 +71,8 @@ const applyAuthProfileToSermons = (sermons: SermonRecord[]): SermonRecord[] => {
     const isDefaultChurch =
       !s.meta.churchName ||
       s.meta.churchName === '은혜의빛교회';
+    const isSample =
+      Boolean(s.meta.isSampleData) || s.meta.id.startsWith('sermon-sample-');
 
     // 기존 캐시된 샘플 설교의 시작 시간이 15초/30초로 되어 있으면 인트로 이후 본 설교 구간(2분/3분)으로 자동 보정
     let nextStartSec = s.meta.startTimeSec;
@@ -31,6 +89,8 @@ const applyAuthProfileToSermons = (sermons: SermonRecord[]): SermonRecord[] => {
       ...s,
       meta: {
         ...s.meta,
+        isSampleData: isSample,
+        userOwnerKey: s.meta.userOwnerKey || ownerKey,
         startTimeSec: nextStartSec,
         startTimeLabel: nextStartLabel,
         preacher: isDefaultPreacher && auth.pastorName ? auth.pastorName : s.meta.preacher,
@@ -40,6 +100,8 @@ const applyAuthProfileToSermons = (sermons: SermonRecord[]): SermonRecord[] => {
       },
     };
   });
+
+  return mapped.map((s) => ensureV13SpeechCoaching(s, mapped, ownerKey));
 };
 
 export const getAllArchivedSermons = (): SermonRecord[] => {
@@ -95,20 +157,41 @@ export const updateAllSermonsProfile = (
   return updated;
 };
 
-export const saveSermonToArchive = (newSermon: SermonRecord): SermonRecord[] => {
+export const saveSermonWithVerification = (
+  newSermon: SermonRecord
+): { saved: boolean; sermons: SermonRecord[]; error?: string } => {
   const current = getAllArchivedSermons();
+  const auth = getDeviceAuthInfo();
+  const ownerKey = `${auth.licenseKey || 'local'}_${auth.pastorName || newSermon.meta.preacher || 'pastor'}`;
 
-  // 동일한 sermon ID만 교체하고, 새 분석 설교는 항상 맨 앞에 누적 추가
-  const filtered = current.filter((s) => s.meta.id !== newSermon.meta.id);
-  const updated = [newSermon, ...filtered];
+  const enriched = ensureV13SpeechCoaching(newSermon, current, ownerKey);
+  const filtered = current.filter((s) => s.meta.id !== enriched.meta.id);
+  const updated = [enriched, ...filtered];
 
   try {
-    localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(updated));
-  } catch (e) {
+    const serialized = JSON.stringify(updated);
+    localStorage.setItem(ARCHIVE_STORAGE_KEY, serialized);
+    const verifyRead = localStorage.getItem(ARCHIVE_STORAGE_KEY);
+    if (!verifyRead) {
+      return {
+        saved: false,
+        sermons: current,
+        error: '브라우저 저장소(localStorage) 기록 확인에 실패했습니다.',
+      };
+    }
+    return { saved: true, sermons: updated };
+  } catch (e: any) {
     console.error('Failed to save sermon to archive:', e);
+    return {
+      saved: false,
+      sermons: current,
+      error: e?.message || '저장 공간 부족 또는 권한 오류로 저장에 실패했습니다.',
+    };
   }
+};
 
-  return updated;
+export const saveSermonToArchive = (newSermon: SermonRecord): SermonRecord[] => {
+  return saveSermonWithVerification(newSermon).sermons;
 };
 
 export const deleteSermonFromArchive = (sermonId: string): SermonRecord[] => {

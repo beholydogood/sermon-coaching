@@ -9,12 +9,20 @@ import {
   Video,
   FileVideo,
 } from 'lucide-react';
-import { SermonRecord } from '../types/sermon';
+import {
+  SermonRecord,
+  SermonOccasionType,
+  SermonDeliveryModeType,
+  SermonAudienceGroupType,
+  SermonCommunicationGoalType,
+} from '../types/sermon';
 import {
   buildTailoredSermonRecord,
   detectScriptureFromTitle,
   parseYoutubeVideoId,
 } from '../utils/sermonAnalyzer';
+import { getAllArchivedSermons } from '../utils/sermonStorage';
+import { buildSpeechCoachingV13Data } from '../utils/speechCoachingEngineV13';
 
 interface AnalyzeSermonModalProps {
   isOpen: boolean;
@@ -42,6 +50,27 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
   const [preacher, setPreacher] = useState(defaultPreacher || '이은혜 목사');
   const [churchName, setChurchName] = useState(defaultChurchName || '은혜의빛교회');
   const [targetAudience, setTargetAudience] = useState('삶의 고난 속에서 위로와 믿음의 결단을 바라는 성도');
+
+  // 스피치 코칭 v1.3 독립 4축 맥락 입력 (행사 · 전달 방식 · 청중 · 발언 목적)
+  const [occasion, setOccasion] = useState<SermonOccasionType>('주일예배');
+  const [ceremonialStage, setCeremonialStage] = useState<string>('');
+  const [deliveryModes, setDeliveryModes] = useState<SermonDeliveryModeType[]>(['강해']);
+  const [audienceGroups, setAudienceGroups] = useState<SermonAudienceGroupType[]>(['장년', '혼합 청중']);
+  const [communicationGoals, setCommunicationGoals] = useState<SermonCommunicationGoalType[]>([
+    '이해',
+    '실천 권유',
+  ]);
+  const [cameraCondition, setCameraCondition] = useState<string>(
+    '시각 화면 미확인 (자막/음성 중심)'
+  );
+
+  const toggleItem = <T extends string>(list: T[], item: T, setter: (next: T[]) => void) => {
+    if (list.includes(item)) {
+      if (list.length > 1) setter(list.filter((x) => x !== item));
+    } else {
+      setter([...list, item]);
+    }
+  };
 
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
@@ -184,6 +213,27 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
 
       const resolvedPreacher = preacher.trim() || defaultPreacher || '담임목사';
       const resolvedChurch = churchName.trim() || defaultChurchName || '소속교회';
+      const previousRecords = getAllArchivedSermons();
+
+      const customSpeechContext = {
+        occasion,
+        ceremonial_stage: ceremonialStage.trim() || null,
+        delivery_modes: deliveryModes,
+        communication_goals: communicationGoals,
+        audience: {
+          groups: audienceGroups,
+          primary_groups: [audienceGroups[0] || '장년'],
+          actual_age_ranges_if_provided: [],
+          religious_vocabulary_familiarity: '보통' as const,
+          language_needs: ['한국어'],
+          accessibility_needs_if_provided: [],
+          speaker_relationship: '담임/설교 목회자',
+        },
+      };
+
+      const customSpeakerContext = {
+        camera_and_editing: cameraCondition,
+      };
 
       let finalRecord: SermonRecord | null = null;
 
@@ -199,6 +249,9 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
             churchName: resolvedChurch,
             targetAudience: targetAudience || '모든 주일 예배 참석 성도',
             videoSourceType: 'youtube',
+            speechContext: customSpeechContext,
+            speakerContext: customSpeakerContext,
+            previousRecords,
           };
 
           const response = await fetch('/api/analyze-sermon', {
@@ -236,6 +289,29 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
           videoFileName: videoFile?.name,
           videoFileUrl: videoFilePreviewUrl || undefined,
         });
+        const { v13, computedPaceLabel } = buildSpeechCoachingV13Data({
+          videoId: finalRecord.meta.youtubeId || finalRecord.meta.id,
+          sermonTitle: finalRecord.meta.sermonTitle,
+          scriptureRef: finalRecord.meta.scriptureRef,
+          preacherName: resolvedPreacher,
+          churchName: resolvedChurch,
+          targetAudienceText: targetAudience,
+          originalDurationSec: (finalRecord.meta.startTimeSec || 0) + 1800,
+          detectedStartSec: finalRecord.meta.startTimeSec || 0,
+          startSource: 'user_input',
+          startReasonLabel: `설교 시작 시점 (${finalRecord.meta.startTimeLabel})`,
+          transcriptLines: [],
+          isDemoSample: false,
+          aiModelConnected: false,
+          continuousVideoAccess: false,
+          audioAccess: false,
+          customSpeechContext: customSpeechContext as any,
+          customSpeakerContext: customSpeakerContext as any,
+          previousRecords,
+        });
+        finalRecord.meta.isSampleData = false;
+        finalRecord.speechCoaching.speechPace = computedPaceLabel;
+        finalRecord.speechCoaching.v13 = v13;
       }
 
       if (sourceMode === 'file' && videoFilePreviewUrl) {
@@ -457,6 +533,133 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
               placeholder="예: 삶의 고난과 불확실성 속에서 위로와 믿음을 구하는 성도"
               className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-hidden focus:border-indigo-400"
             />
+          </div>
+
+          {/* 스피치 코칭 4축 독립 맥락 조합 (행사 · 전달 방식 · 청중 · 장면 목적) */}
+          <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-indigo-300">
+                🎙️ 스피치 코칭 4축 맥락 조합 (행사 · 전달 방식 · 청중 · 목적 독립 설정)
+              </span>
+              <span className="text-[10px] text-slate-400">복수 조합 가능</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">1. 행사·예배 상황</label>
+                <select
+                  value={occasion}
+                  onChange={(e) => setOccasion(e.target.value as SermonOccasionType)}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs"
+                >
+                  {(['주일예배', '수요·금요예배', '새벽기도회', '부흥회', '수련회', '결혼식', '장례식', '교육·강연'] as SermonOccasionType[]).map(
+                    (occ) => (
+                      <option key={occ} value={occ}>
+                        {occ}
+                      </option>
+                    )
+                  )}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">
+                  촬영·시각 관찰 조건 (분모 분리용)
+                </label>
+                <select
+                  value={cameraCondition}
+                  onChange={(e) => setCameraCondition(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs"
+                >
+                  <option value="시각 화면 미확인 (자막/음성 중심)">유튜브 자막·음성 중심 (시각 추정 제외)</option>
+                  <option value="강대상/하단 가림 (손동작 일부 또는 전체 비가시)">강대상 손 가림 (손동작 분모 제외)</option>
+                  <option value="측면 카메라 (정면 시선과 실제 눈맞춤 불일치)">측면 카메라 (정면=눈맞춤 환산 제외)</option>
+                  <option value="수어통역 분할/삽입(PIP) 화면 포함">수어통역 삽입 화면 포함 (통역자 동작 제외)</option>
+                  <option value="정면 카메라 (설교자 상반신·손 확인 가능)">정면 카메라 (상반신·손 가시)</option>
+                </select>
+              </div>
+            </div>
+
+            {occasion === '장례식' && (
+              <div>
+                <label className="block text-[11px] text-amber-300 mb-1">
+                  장례 의식 세부 순서 (위로·여백·절제 기준 적용)
+                </label>
+                <input
+                  type="text"
+                  value={ceremonialStage}
+                  onChange={(e) => setCeremonialStage(e.target.value)}
+                  placeholder="예: 입관예배 / 발인예배 / 하관예배 / 위로예배"
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-[11px] text-slate-400 mb-1">2. 전달 방식 (복수 선택 가능)</label>
+              <div className="flex flex-wrap gap-1.5">
+                {(['강해', '주제 설명', '이야기·간증', '권면·호소', '교육·강의', '혼합'] as SermonDeliveryModeType[]).map(
+                  (mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => toggleItem(deliveryModes, mode, setDeliveryModes)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${
+                        deliveryModes.includes(mode)
+                          ? 'bg-indigo-600/80 text-white border-indigo-400'
+                          : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">3. 청중 구성 (복수 선택)</label>
+                <div className="flex flex-wrap gap-1">
+                  {(['장년', '청년', '청소년', '어린이', '혼합 청중'] as SermonAudienceGroupType[]).map(
+                    (aud) => (
+                      <button
+                        key={aud}
+                        type="button"
+                        onClick={() => toggleItem(audienceGroups, aud, setAudienceGroups)}
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                          audienceGroups.includes(aud)
+                            ? 'bg-emerald-600/80 text-white border-emerald-400'
+                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}
+                      >
+                        {aud}
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">4. 발언 목적 (복수 선택)</label>
+                <div className="flex flex-wrap gap-1">
+                  {(['이해', '기억', '위로', '축복', '성찰', '실천 권유'] as SermonCommunicationGoalType[]).map(
+                    (goal) => (
+                      <button
+                        key={goal}
+                        type="button"
+                        onClick={() => toggleItem(communicationGoals, goal, setCommunicationGoals)}
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                          communicationGoals.includes(goal)
+                            ? 'bg-amber-500/80 text-slate-950 font-bold border-amber-300'
+                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}
+                      >
+                        {goal}
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* 제출 버튼 */}

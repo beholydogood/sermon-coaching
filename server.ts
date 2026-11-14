@@ -13,6 +13,8 @@ import {
   formatSecToMmSs,
   fetchYoutubeSermonDetails,
 } from './src/utils/youtubeSermonDetector';
+import { buildSpeechCoachingV13Data } from './src/utils/speechCoachingEngineV13';
+import { SERMON_REFERENCE_LIBRARY_26 } from './src/data/speechReferenceLibrary';
 import {
   getAllLicenseUsers,
   findUserByKey,
@@ -30,6 +32,32 @@ dotenv.config();
 
 const ROOT_DIR = process.cwd();
 const SETTINGS_FILE = path.resolve(ROOT_DIR, 'data', 'settings.json');
+const SPEECH_COACH_PROMPT_FILE = path.resolve(
+  ROOT_DIR,
+  'sermon-coach-antigravity',
+  'prompts',
+  'sermon_speech_coach_prompt.md'
+);
+
+/**
+ * prompts/sermon_speech_coach_prompt.md의 구분선(---) 아래 전체 마스터 프롬프트 v1.3 로드
+ * (문서 앞부분의 사용 안내는 모델 지침과 분리)
+ */
+const loadMasterSpeechCoachPromptV13 = (): string => {
+  try {
+    if (fs.existsSync(SPEECH_COACH_PROMPT_FILE)) {
+      const raw = fs.readFileSync(SPEECH_COACH_PROMPT_FILE, 'utf8');
+      const dividerIdx = raw.indexOf('\n---');
+      if (dividerIdx !== -1) {
+        return raw.slice(dividerIdx + 4).trim();
+      }
+      return raw.trim();
+    }
+  } catch (e) {
+    console.warn('Failed to load sermon_speech_coach_prompt.md:', e);
+  }
+  return '당신은 목회자의 설교 영상을 분석하는 전문 스피치 코치다. 확인된 설교자가 실제 설교하는 구간만 코칭하며 신학·영성·인격을 채점하지 않는다.';
+};
 
 const loadRuntimeSettings = (): { geminiApiKey?: string; adminPassword?: string } => {
   try {
@@ -146,6 +174,9 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
       targetAudience = '모든 주일 예배 참석 성도',
       videoSourceType = 'youtube',
       videoFileName = '',
+      speechContext: customSpeechContext,
+      speakerContext: customSpeakerContext,
+      previousRecords = [],
     } = req.body;
 
     const isFileMode = videoSourceType === 'file';
@@ -158,7 +189,7 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
     }
 
     // 유튜브 모드일 경우 실제 영상 제목, 채널명, 설명란, 성경 본문, 실제 설교 시작 시간 & 자막 자동 추출
-    let ytDetails = {
+    let ytDetails: any = {
       videoTitle: '',
       channel: '',
       description: '',
@@ -168,6 +199,7 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
       startSource: 'title_fallback',
       startReasonLabel: '',
       sermonTranscriptExcerpt: '',
+      transcriptLines: [],
     };
 
     if (!isFileMode) {
@@ -816,12 +848,133 @@ ${ytDetails.sermonTranscriptExcerpt ? `- 실제 설교 음성 자막 발췌 (${s
       };
     }
 
+    // ========================================================
+    // 설교 스피치 코칭 v1.3 엔진 (대상 설교자·적격 구간 선별 + 자막 정량 측정 + 마스터 프롬프트 v1.3 연결)
+    // ========================================================
+    const { v13: baseV13, computedPaceLabel } = buildSpeechCoachingV13Data({
+      videoId,
+      sermonTitle: resolvedTitle,
+      scriptureRef: resolvedScripture,
+      preacherName: resolvedPreacher,
+      churchName: resolvedChurch,
+      targetAudienceText: targetAudience,
+      originalDurationSec: ytDetails.lengthSec || 0,
+      detectedStartSec: startSec,
+      startSource: (ytDetails.startSource as any) || 'title_fallback',
+      startReasonLabel:
+        ytDetails.startReasonLabel ||
+        `실제 설교 시작 시점 ${startTimeLabel} (${startSec}초) 기준`,
+      transcriptLines: ytDetails.transcriptLines || [],
+      isDemoSample: false,
+      aiModelConnected: Boolean(ai),
+      continuousVideoAccess: false,
+      audioAccess: false,
+      customSpeechContext,
+      customSpeakerContext,
+      previousRecords: Array.isArray(previousRecords) ? previousRecords : [],
+    });
+
+    if (ai && baseV13.targetSelection.confirmation_status !== 'unconfirmed') {
+      try {
+        const masterPromptV13 = loadMasterSpeechCoachPromptV13();
+        const audioIv = baseV13.targetSelection.eligible_audio_intervals[0] || {
+          startSec,
+          endSec: startSec + 1800,
+        };
+        const sermonTranscriptSegments = (ytDetails.transcriptLines || [])
+          .filter((l: any) => l.sec >= audioIv.startSec && l.sec <= audioIv.endSec)
+          .slice(0, 60)
+          .map((l: any) => ({
+            start_sec: Math.floor(l.sec),
+            end_sec: Math.ceil(l.sec + (l.dur || 4)),
+            time_display: formatSecToMmSs(l.sec),
+            speaker_id: baseV13.targetSelection.video_local_target_id,
+            text: l.txt,
+          }));
+
+        const specInputPayload = {
+          session_id: `sess_${Date.now()}`,
+          user_id: `pastor_${resolvedPreacher}`,
+          video_id: videoId,
+          recorded_at: new Date().toISOString(),
+          target_selection: baseV13.targetSelection,
+          capabilities: baseV13.capabilities,
+          speaker_context: baseV13.speakerContext,
+          speech_context: baseV13.speechContext,
+          media: {
+            original_duration_seconds: baseV13.originalDurationSec,
+            analyzed_intervals: baseV13.targetSelection.eligible_audio_intervals,
+            excluded_intervals: baseV13.targetSelection.excluded_intervals_with_reasons,
+            timeline_mapping: 'direct_original_video_seconds',
+          },
+          transcript_segments: sermonTranscriptSegments,
+          observations: baseV13.observations,
+          measurements: baseV13.measurements,
+          comparable_history: baseV13.changeJudgments,
+          previous_practice: [],
+          user_corrections: baseV13.userCorrections,
+          approved_reference_clips: SERMON_REFERENCE_LIBRARY_26.filter(
+            (r) => r.reviewStatus === 'preliminary_intro_analysis'
+          ),
+        };
+
+        const v13CoachResponse = await Promise.race([
+          ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: `아래 제공된 설교 스피치 분석 입력 JSON(docs/sermon_app_spec.md 규격)을 바탕으로, 마스터 프롬프트 v1.3 지침을 엄격히 준수하여 JSON으로 응답하세요.
+반드시 확인된 대상 설교자의 설교 적격 구간(${audioIv.startSec}초~${audioIv.endSec}초) 안의 실제 근거만 사용하고, capabilities.continuous_video_access가 false이면 시선·손동작·표정을 보았다고 단정하지 마세요.
+응답 JSON 형식:
+{
+  "coreConclusion": "이번 영상에서 가장 중요한 스피치 코칭 핵심 결론 (2~3문장, 존댓말)",
+  "contextPriorityFocus": ["이번 행사·전달방식·청중 조합에서 우선 살핀 전달 기능 1", "기능 2"]
+}
+
+[입력 자료 JSON]
+${JSON.stringify(specInputPayload)}`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              systemInstruction: masterPromptV13,
+              responseMimeType: 'application/json',
+            },
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('v13 timeout')), 10000)),
+        ]);
+
+        const v13Parsed = JSON.parse((v13CoachResponse as any).text || '{}');
+        if (v13Parsed.coreConclusion) {
+          baseV13.coreConclusion = v13Parsed.coreConclusion;
+        }
+        if (Array.isArray(v13Parsed.contextPriorityFocus) && v13Parsed.contextPriorityFocus.length > 0) {
+          baseV13.contextPriorityFocus = v13Parsed.contextPriorityFocus;
+        }
+      } catch (v13Err: any) {
+        console.warn('Speech Coach v1.3 AI refinement notice:', v13Err?.message);
+      }
+    }
+
+    if (analysisResult && analysisResult.speechCoaching) {
+      analysisResult.speechCoaching.speechPace = computedPaceLabel;
+      analysisResult.speechCoaching.v13 = baseV13;
+    }
+
     const sermonId = `sermon-${Date.now()}`;
+    const endTimeSec =
+      baseV13.targetSelection.eligible_audio_intervals[0]?.endSec ||
+      ytDetails.lengthSec ||
+      startSec + 1800;
     const sermonRecord = {
       meta: {
         id: sermonId,
         churchName: resolvedChurch,
-        churchSub: '주일 설교',
+        churchSub: baseV13.speechContext.occasion || '주일예배',
         preacher: resolvedPreacher,
         date: new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }),
         sermonTitle: resolvedTitle,
@@ -829,11 +982,13 @@ ${ytDetails.sermonTranscriptExcerpt ? `- 실제 설교 음성 자막 발췌 (${s
         targetAudience,
         youtubeId: videoId,
         startTimeSec: startSec,
+        endTimeSec,
         startTimeLabel,
         totalLengthLabel: ytDetails.lengthSec > 0
-          ? `전체 ${Math.floor(ytDetails.lengthSec / 60)}분 영상 (${startTimeLabel} 설교 시작)`
-          : `${startTimeLabel} ~ 설교 종료`,
+          ? `전체 ${Math.floor(ytDetails.lengthSec / 60)}분 영상 (설교 적격 구간 ${startTimeLabel}~${formatSecToMmSs(endTimeSec)})`
+          : `${startTimeLabel} ~ ${formatSecToMmSs(endTimeSec)} 설교 구간`,
         createdAt: new Date().toISOString(),
+        isSampleData: false,
         institution: resolvedChurch,
         lecturer: resolvedPreacher,
         lectureTitle: resolvedTitle,
@@ -855,6 +1010,84 @@ ${ytDetails.sermonTranscriptExcerpt ? `- 실제 설교 음성 자막 발췌 (${s
 
 app.post('/api/analyze-sermon', handleAnalyzeSermon);
 app.post('/api/analyze-lecture', handleAnalyzeSermon);
+
+// API: 마스터 프롬프트 v1.3 기반 스피치 코칭 재분석 (맥락 4축 변경 / 대상·구간 정정 / 사용자 정정 반영)
+app.post('/api/speech-coach/re-evaluate', async (req, res) => {
+  try {
+    const {
+      videoId = '',
+      youtubeUrl = '',
+      sermonTitle = '',
+      scriptureRef = '',
+      preacherName = '',
+      churchName = '',
+      targetAudienceText = '',
+      startSec = 0,
+      originalDurationSec = 0,
+      speechContext,
+      speakerContext,
+      previousRecords = [],
+      isDemoSample = false,
+    } = req.body || {};
+
+    let transcriptLines: any[] = [];
+    let resolvedDuration = originalDurationSec;
+    let startReason = `사용자 확인 설교 시작 시점(${formatSecToMmSs(startSec)})`;
+
+    const ytId = extractYoutubeId(youtubeUrl || videoId);
+    if (ytId && !String(ytId).startsWith('file-')) {
+      try {
+        const ytDetails = await fetchYoutubeSermonDetails(
+          ytId,
+          youtubeUrl || `https://www.youtube.com/watch?v=${ytId}`
+        );
+        transcriptLines = ytDetails.transcriptLines || [];
+        if (!resolvedDuration && ytDetails.lengthSec > 0) {
+          resolvedDuration = ytDetails.lengthSec;
+        }
+        if (ytDetails.startReasonLabel) {
+          startReason = ytDetails.startReasonLabel;
+        }
+      } catch {
+        // ignore network error
+      }
+    }
+
+    const ai = getAiClient();
+    const { v13, computedPaceLabel } = buildSpeechCoachingV13Data({
+      videoId: ytId || videoId || 'sermon-video',
+      sermonTitle,
+      scriptureRef,
+      preacherName,
+      churchName,
+      targetAudienceText,
+      originalDurationSec: resolvedDuration,
+      detectedStartSec: startSec,
+      startSource: 'user_input',
+      startReasonLabel: startReason,
+      transcriptLines,
+      isDemoSample: Boolean(isDemoSample),
+      aiModelConnected: Boolean(ai),
+      continuousVideoAccess: false,
+      audioAccess: false,
+      customSpeechContext: speechContext,
+      customSpeakerContext: speakerContext,
+      previousRecords: Array.isArray(previousRecords) ? previousRecords : [],
+    });
+
+    return res.json({
+      success: true,
+      v13,
+      computedPaceLabel,
+      masterPromptLoaded: fs.existsSync(SPEECH_COACH_PROMPT_FILE),
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || '스피치 코칭 재평가 중 오류가 발생했습니다.',
+    });
+  }
+});
 
 // API: AI 설교 코치 1:1 상담
 app.post('/api/chat-coach', async (req, res) => {
