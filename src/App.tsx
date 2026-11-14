@@ -55,9 +55,11 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
   // 중앙 원격 배포 버전 상태 (Feature 5)
+  const CURRENT_CLIENT_BUILD = 250;
+  const APPLIED_RELEASE_STORAGE_KEY = 'sermon_coaching_applied_build_v1';
   const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfo>({
     version: 'v2.5.0',
-    buildNumber: 250,
+    buildNumber: CURRENT_CLIENT_BUILD,
     releasedAt: new Date().toISOString(),
     releaseTitle: '설교 누적 아카이브 & AI 도서 출판 스튜디오 v2.5 정식 배포',
     releaseNotes: [
@@ -114,14 +116,22 @@ export default function App() {
       setCurrentTimestamp(archived[0].meta.startTimeSec || 0);
     }
 
-    // 중앙 원격 최신 버전 확인
+    // 중앙 원격 최신 버전 확인 (현재 빌드보다 높은 신규 업데이트가 발행되었을 때만 표시)
     fetch('/api/release/latest')
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.releaseInfo) {
-          if (data.releaseInfo.version !== 'v2.4.0' && data.releaseInfo.buildNumber > 240) {
+          const savedBuild = Number(
+            typeof window !== 'undefined'
+              ? localStorage.getItem(APPLIED_RELEASE_STORAGE_KEY) || CURRENT_CLIENT_BUILD
+              : CURRENT_CLIENT_BUILD
+          );
+          const appliedBuild = Math.max(CURRENT_CLIENT_BUILD, isNaN(savedBuild) ? CURRENT_CLIENT_BUILD : savedBuild);
+          if (data.releaseInfo.buildNumber > appliedBuild) {
             setReleaseInfo(data.releaseInfo);
             setHasUpdateAvailable(true);
+          } else {
+            setHasUpdateAvailable(false);
           }
         }
       })
@@ -243,10 +253,13 @@ export default function App() {
 
   const handleReleasePublished = (newRelease: AppReleaseInfo) => {
     setReleaseInfo(newRelease);
-    setHasUpdateAvailable(false);
+    setHasUpdateAvailable(true);
   };
 
   const handleApplyUpdate = () => {
+    try {
+      localStorage.setItem(APPLIED_RELEASE_STORAGE_KEY, String(releaseInfo.buildNumber));
+    } catch {}
     setHasUpdateAvailable(false);
     alert(`[${releaseInfo.version}] 업데이트가 본 기기에 성공적으로 반영되었습니다.`);
   };
