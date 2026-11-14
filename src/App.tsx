@@ -18,6 +18,7 @@ import {
   saveSermonWithVerification,
   deleteSermonFromArchive,
   updateAllSermonsProfile,
+  syncSermonsWithServer,
 } from './utils/sermonStorage';
 import {
   getDeviceAuthInfo,
@@ -96,16 +97,19 @@ export default function App() {
           setIsAuthModalOpen(true);
         } else if (res.authInfo) {
           setAuthInfo(res.authInfo);
-          if (res.authInfo.pastorName || res.authInfo.churchName) {
-            const syncedList = updateAllSermonsProfile(
-              res.authInfo.pastorName || '',
-              res.authInfo.churchName || ''
-            );
-            setSermons(syncedList);
+          syncSermonsWithServer().then((synced) => {
+            let finalSermons = synced;
+            if (res.authInfo?.pastorName || res.authInfo?.churchName) {
+              finalSermons = updateAllSermonsProfile(
+                res.authInfo.pastorName || '',
+                res.authInfo.churchName || ''
+              );
+            }
+            setSermons(finalSermons);
             setActiveSermon((prev) =>
-              prev ? syncedList.find((s) => s.meta.id === prev.meta.id) || syncedList[0] || prev : syncedList[0] || null
+              prev ? finalSermons.find((s) => s.meta.id === prev.meta.id) || finalSermons[0] || prev : finalSermons[0] || null
             );
-          }
+          });
         }
       });
     }
@@ -116,6 +120,32 @@ export default function App() {
       setActiveSermon(archived[0]);
       setCurrentTimestamp(archived[0].meta.startTimeSec || 0);
     }
+
+    // 서버와 계정별 설교 아카이브 즉시 양방향 동기화
+    syncSermonsWithServer().then((synced) => {
+      if (Array.isArray(synced) && synced.length > 0) {
+        setSermons(synced);
+        setActiveSermon((prev) =>
+          prev ? synced.find((s) => s.meta.id === prev.meta.id) || synced[0] : synced[0]
+        );
+      }
+    });
+
+    // 다른 디바이스에서 설교를 등록한 뒤 현재 기기 창으로 돌아왔을 때 자동 동기화
+    const handleVisibilityOrFocusSync = () => {
+      if (document.visibilityState === 'visible') {
+        syncSermonsWithServer().then((synced) => {
+          if (Array.isArray(synced) && synced.length > 0) {
+            setSermons(synced);
+            setActiveSermon((prev) =>
+              prev ? synced.find((s) => s.meta.id === prev.meta.id) || synced[0] : synced[0]
+            );
+          }
+        });
+      }
+    };
+    window.addEventListener('focus', handleVisibilityOrFocusSync);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocusSync);
 
     // 중앙 원격 최신 버전 확인 (현재 빌드보다 높은 신규 업데이트가 발행되었을 때만 표시)
     fetch('/api/release/latest')
@@ -140,22 +170,26 @@ export default function App() {
 
     return () => {
       window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('focus', handleVisibilityOrFocusSync);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocusSync);
     };
   }, []);
 
   const handleDeviceAuthorized = (newAuth: DeviceAuthInfo) => {
     setAuthInfo(newAuth);
-    if (newAuth.pastorName || newAuth.churchName) {
-      const updatedSermons = updateAllSermonsProfile(
-        newAuth.pastorName || '',
-        newAuth.churchName || ''
-      );
-      setSermons(updatedSermons);
-      if (activeSermon) {
-        const matched = updatedSermons.find((s) => s.meta.id === activeSermon.meta.id);
-        setActiveSermon(matched || updatedSermons[0] || null);
+    syncSermonsWithServer().then((synced) => {
+      let finalSermons = synced;
+      if (newAuth.pastorName || newAuth.churchName) {
+        finalSermons = updateAllSermonsProfile(
+          newAuth.pastorName || '',
+          newAuth.churchName || ''
+        );
       }
-    }
+      setSermons(finalSermons);
+      setActiveSermon((prev) =>
+        prev ? finalSermons.find((s) => s.meta.id === prev.meta.id) || finalSermons[0] || null : finalSermons[0] || null
+      );
+    });
     setIsAuthModalOpen(false);
   };
 

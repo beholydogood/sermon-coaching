@@ -26,6 +26,10 @@ import {
   importLicenseUsers,
   verifyAndRegisterDeviceOnServer,
   verifyActiveSessionOnServer,
+  syncAccountSermonsOnServer,
+  saveAccountSermonOnServer,
+  deleteAccountSermonOnServer,
+  updateAccountSermonsProfileOnServer,
 } from './src/utils/userStoreServer';
 
 dotenv.config();
@@ -224,6 +228,7 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
       speechContext: customSpeechContext,
       speakerContext: customSpeakerContext,
       previousRecords = [],
+      licenseKey = '',
     } = req.body;
 
     const isFileMode = videoSourceType === 'file';
@@ -1114,6 +1119,14 @@ ${JSON.stringify(specInputPayload)}`,
       ...analysisResult,
     };
 
+    if (licenseKey) {
+      try {
+        saveAccountSermonOnServer(licenseKey, sermonRecord);
+      } catch (saveErr) {
+        console.warn('Failed to auto-save sermon on server for licenseKey:', licenseKey, saveErr);
+      }
+    }
+
     return res.json({
       success: true,
       sermonData: sermonRecord,
@@ -1769,14 +1782,61 @@ app.post('/api/auth/verify-session', (req, res) => {
   return res.status(401).json({ success: false, ...result });
 });
 
-// 스튜디오 상단에서 목회자 성함/교회명 수정 시 관리자앱(users.json)에도 실시간 동기화
+// 스튜디오 상단에서 목회자 성함/교회명 수정 시 관리자앱(users.json) 및 설교 아카이브에도 실시간 동기화
 app.post('/api/auth/update-profile', (req, res) => {
   const { licenseKey, pastorName, churchName } = req.body || {};
   if (!licenseKey) {
     return res.status(400).json({ success: false, message: '라이선스 키가 필요합니다.' });
   }
   const result = updateLicenseUser(licenseKey, { pastorName, churchName });
+  if (pastorName || churchName) {
+    try {
+      updateAccountSermonsProfileOnServer(licenseKey, pastorName || '', churchName || '');
+    } catch {}
+  }
   return res.json(result);
+});
+
+// ==========================================
+// 계정별 설교 아카이브 멀티 디바이스 실시간 동기화 API
+// ==========================================
+app.post('/api/sermons/sync', (req, res) => {
+  try {
+    const { licenseKey = '', sermons = [] } = req.body || {};
+    const synced = syncAccountSermonsOnServer(licenseKey, sermons);
+    return res.json({ success: true, sermons: synced });
+  } catch (err: any) {
+    console.error('Sermons sync error:', err);
+    return res.status(500).json({ success: false, error: err?.message || '동기화 오류' });
+  }
+});
+
+app.post('/api/sermons/save', (req, res) => {
+  try {
+    const { licenseKey = '', sermon } = req.body || {};
+    if (!sermon) {
+      return res.status(400).json({ success: false, message: '저장할 설교 정보가 없습니다.' });
+    }
+    const updated = saveAccountSermonOnServer(licenseKey, sermon);
+    return res.json({ success: true, sermons: updated });
+  } catch (err: any) {
+    console.error('Sermons save error:', err);
+    return res.status(500).json({ success: false, error: err?.message || '저장 오류' });
+  }
+});
+
+app.post('/api/sermons/delete', (req, res) => {
+  try {
+    const { licenseKey = '', sermonId } = req.body || {};
+    if (!sermonId) {
+      return res.status(400).json({ success: false, message: '삭제할 설교 ID가 없습니다.' });
+    }
+    const updated = deleteAccountSermonOnServer(licenseKey, sermonId);
+    return res.json({ success: true, sermons: updated });
+  } catch (err: any) {
+    console.error('Sermons delete error:', err);
+    return res.status(500).json({ success: false, error: err?.message || '삭제 오류' });
+  }
 });
 
 // Vite 개발 서버 또는 프로덕션 정적 서빙

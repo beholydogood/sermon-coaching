@@ -23,7 +23,7 @@ import {
 } from '../utils/sermonAnalyzer';
 import { getAllArchivedSermons } from '../utils/sermonStorage';
 import { buildSpeechCoachingV13Data } from '../utils/speechCoachingEngineV13';
-import { getPersonalGeminiApiKey } from '../utils/auth';
+import { getPersonalGeminiApiKey, getDeviceAuthInfo } from '../utils/auth';
 
 interface AnalyzeSermonModalProps {
   isOpen: boolean;
@@ -253,6 +253,7 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
             speechContext: customSpeechContext,
             speakerContext: customSpeakerContext,
             previousRecords,
+            licenseKey: (getDeviceAuthInfo().licenseKey || getDeviceAuthInfo().authorizedKey || '').trim().toUpperCase(),
           };
 
           const response = await fetch('/api/analyze-sermon', {

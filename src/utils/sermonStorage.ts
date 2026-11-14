@@ -3,7 +3,14 @@ import { INITIAL_SERMON_LIST, SAMPLE_SERMON_1 } from '../data/sermonData';
 import { getDeviceAuthInfo } from './auth';
 import { buildSpeechCoachingV13Data } from './speechCoachingEngineV13';
 
-const ARCHIVE_STORAGE_KEY = 'sermon_coaching_archive_v2';
+const LEGACY_STORAGE_KEY = 'sermon_coaching_archive_v2';
+
+export const getAccountStorageKey = (): string => {
+  if (typeof window === 'undefined') return `${LEGACY_STORAGE_KEY}_DEFAULT`;
+  const auth = getDeviceAuthInfo();
+  const key = (auth.licenseKey || auth.authorizedKey || '').trim().toUpperCase();
+  return key ? `${LEGACY_STORAGE_KEY}_${key}` : `${LEGACY_STORAGE_KEY}_DEFAULT`;
+};
 
 const ensureV13SpeechCoaching = (
   sermon: SermonRecord,
@@ -107,14 +114,32 @@ const applyAuthProfileToSermons = (sermons: SermonRecord[]): SermonRecord[] => {
 export const getAllArchivedSermons = (): SermonRecord[] => {
   if (typeof window === 'undefined') return INITIAL_SERMON_LIST;
 
+  const storageKey = getAccountStorageKey();
+
   try {
-    const stored = localStorage.getItem(ARCHIVE_STORAGE_KEY);
+    const stored = localStorage.getItem(storageKey);
     if (stored) {
       const parsed = JSON.parse(stored);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const synced = applyAuthProfileToSermons(parsed);
-        localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(synced));
+        localStorage.setItem(storageKey, JSON.stringify(synced));
         return synced;
+      }
+    }
+
+    // 마이그레이션: 기존 공통 키에 저장되어 있던 설교 중 사용자가 등록한 설교가 있는지 확인
+    const legacyStored = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (legacyStored) {
+      const parsedLegacy = JSON.parse(legacyStored);
+      if (Array.isArray(parsedLegacy) && parsedLegacy.length > 0) {
+        const userSermons = parsedLegacy.filter(
+          (s) => !s.meta.isSampleData && !s.meta.id.startsWith('sermon-sample-')
+        );
+        if (userSermons.length > 0) {
+          const synced = applyAuthProfileToSermons(parsedLegacy);
+          localStorage.setItem(storageKey, JSON.stringify(synced));
+          return synced;
+        }
       }
     }
   } catch (e) {
@@ -124,12 +149,45 @@ export const getAllArchivedSermons = (): SermonRecord[] => {
   // 초기 저장소가 비어있으면 기본 샘플들로 초기화
   const initialSynced = applyAuthProfileToSermons(INITIAL_SERMON_LIST);
   try {
-    localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(initialSynced));
+    localStorage.setItem(storageKey, JSON.stringify(initialSynced));
   } catch (e) {
     console.warn('Failed to init sermons storage', e);
   }
 
   return initialSynced;
+};
+
+export const syncSermonsWithServer = async (): Promise<SermonRecord[]> => {
+  if (typeof window === 'undefined') return getAllArchivedSermons();
+
+  const auth = getDeviceAuthInfo();
+  const licenseKey = (auth.licenseKey || auth.authorizedKey || '').trim().toUpperCase();
+  if (!licenseKey) return getAllArchivedSermons();
+
+  const localSermons = getAllArchivedSermons();
+
+  try {
+    const res = await fetch('/api/sermons/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        licenseKey,
+        sermons: localSermons,
+      }),
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success && Array.isArray(data.sermons) && data.sermons.length > 0) {
+      const synced = applyAuthProfileToSermons(data.sermons);
+      const storageKey = getAccountStorageKey();
+      localStorage.setItem(storageKey, JSON.stringify(synced));
+      return synced;
+    }
+  } catch (err) {
+    console.warn('Failed to sync sermons with server:', err);
+  }
+
+  return localSermons;
 };
 
 export const updateAllSermonsProfile = (
@@ -148,8 +206,10 @@ export const updateAllSermonsProfile = (
     },
   }));
 
+  const storageKey = getAccountStorageKey();
   try {
-    localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(updated));
+    localStorage.setItem(storageKey, JSON.stringify(updated));
+    localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(updated));
   } catch (e) {
     console.error('Failed to update sermons profile in localStorage:', e);
   }
@@ -168,10 +228,12 @@ export const saveSermonWithVerification = (
   const filtered = current.filter((s) => s.meta.id !== enriched.meta.id);
   const updated = [enriched, ...filtered];
 
+  const storageKey = getAccountStorageKey();
   try {
     const serialized = JSON.stringify(updated);
-    localStorage.setItem(ARCHIVE_STORAGE_KEY, serialized);
-    const verifyRead = localStorage.getItem(ARCHIVE_STORAGE_KEY);
+    localStorage.setItem(storageKey, serialized);
+    localStorage.setItem(LEGACY_STORAGE_KEY, serialized);
+    const verifyRead = localStorage.getItem(storageKey);
     if (!verifyRead) {
       return {
         saved: false,
@@ -179,6 +241,17 @@ export const saveSermonWithVerification = (
         error: '브라우저 저장소(localStorage) 기록 확인에 실패했습니다.',
       };
     }
+
+    // 서버로 즉시 비동기 저장하여 다른 모든 기기와 실시간 동기화
+    const licenseKey = (auth.licenseKey || auth.authorizedKey || '').trim().toUpperCase();
+    if (licenseKey) {
+      fetch('/api/sermons/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseKey, sermon: enriched }),
+      }).catch((err) => console.warn('Failed to save sermon to server:', err));
+    }
+
     return { saved: true, sermons: updated };
   } catch (e: any) {
     console.error('Failed to save sermon to archive:', e);
@@ -201,8 +274,21 @@ export const deleteSermonFromArchive = (sermonId: string): SermonRecord[] => {
   // 최소 1개는 유지
   const finalUpdated = updated.length > 0 ? updated : applyAuthProfileToSermons([SAMPLE_SERMON_1]);
 
+  const storageKey = getAccountStorageKey();
   try {
-    localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(finalUpdated));
+    localStorage.setItem(storageKey, JSON.stringify(finalUpdated));
+    localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(finalUpdated));
+
+    // 서버에서도 즉시 삭제하여 다른 기기에서 되살아나지 않도록 동기화
+    const auth = getDeviceAuthInfo();
+    const licenseKey = (auth.licenseKey || auth.authorizedKey || '').trim().toUpperCase();
+    if (licenseKey) {
+      fetch('/api/sermons/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseKey, sermonId }),
+      }).catch((err) => console.warn('Failed to delete sermon from server:', err));
+    }
   } catch (e) {
     console.error('Failed to delete sermon from archive:', e);
   }

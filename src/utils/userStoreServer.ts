@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import { LicenseUser, RegisteredDevice } from '../types/sermon';
+import { LicenseUser, RegisteredDevice, SermonRecord } from '../types/sermon';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const USERS_FILE = path.resolve(DATA_DIR, 'users.json');
 const DELETED_KEYS_FILE = path.resolve(DATA_DIR, 'deleted_keys.json');
+const USER_SERMONS_FILE = path.resolve(DATA_DIR, 'user_sermons.json');
 
 const DEFAULT_USERS: LicenseUser[] = [
   {
@@ -604,4 +605,218 @@ export function verifyAndRegisterDeviceOnServer(params: {
       authorizedAt: nowStr,
     },
   };
+}
+
+// ==========================================
+// 계정별 설교 아카이브 및 코칭 내역 서버 영구 저장 & 멀티 디바이스 실시간 동기화
+// ==========================================
+export interface AccountSermonsEntry {
+  sermons: SermonRecord[];
+  deletedIds: string[];
+  updatedAt: string;
+}
+
+export type AccountSermonsStore = Record<string, AccountSermonsEntry>;
+
+function normalizeAccountKey(rawKey: string = ''): string {
+  const clean = (rawKey || '').trim().toUpperCase();
+  return clean || 'SERMON-DEFAULT-GUEST';
+}
+
+function loadAccountSermonsStore(): AccountSermonsStore {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(USER_SERMONS_FILE)) {
+      const raw = fs.readFileSync(USER_SERMONS_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as AccountSermonsStore;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to read user_sermons.json, initializing empty store:', err);
+  }
+  return {};
+}
+
+function saveAccountSermonsStore(store: AccountSermonsStore): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(USER_SERMONS_FILE, JSON.stringify(store, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save user_sermons.json:', err);
+  }
+}
+
+export function syncAccountSermonsOnServer(
+  licenseKey: string,
+  clientSermons: SermonRecord[] = []
+): SermonRecord[] {
+  const key = normalizeAccountKey(licenseKey);
+  const store = loadAccountSermonsStore();
+  const entry: AccountSermonsEntry = store[key] || {
+    sermons: [],
+    deletedIds: [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  const deletedSet = new Set(entry.deletedIds.map((id) => String(id)));
+  const mergedMap = new Map<string, SermonRecord>();
+
+  // 1. 서버에 이미 보관된 설교 등록
+  for (const s of entry.sermons) {
+    if (s && s.meta && s.meta.id && !deletedSet.has(s.meta.id)) {
+      mergedMap.set(s.meta.id, s);
+    }
+  }
+
+  // 2. 클라이언트에서 전달받은 설교 병합
+  if (Array.isArray(clientSermons)) {
+    for (const c of clientSermons) {
+      if (!c || !c.meta || !c.meta.id) continue;
+      // 다른 기기에서 이미 삭제한 설교는 재유입 방지
+      if (deletedSet.has(c.meta.id)) continue;
+
+      const existing = mergedMap.get(c.meta.id);
+      if (!existing) {
+        mergedMap.set(c.meta.id, c);
+      } else {
+        // 기존 설교가 있으면 사용자 교정 내용 또는 최신 타임스탬프를 우선 반영
+        const existingHasCorrections =
+          Boolean(existing.speechCoaching?.v13?.userCorrections?.corrections?.length);
+        const incomingHasCorrections =
+          Boolean(c.speechCoaching?.v13?.userCorrections?.corrections?.length);
+
+        if (incomingHasCorrections && !existingHasCorrections) {
+          mergedMap.set(c.meta.id, c);
+        } else {
+          const existTime = new Date(existing.meta.createdAt || existing.meta.date || 0).getTime();
+          const inTime = new Date(c.meta.createdAt || c.meta.date || 0).getTime();
+          if (inTime > existTime) {
+            mergedMap.set(c.meta.id, c);
+          }
+        }
+      }
+    }
+  }
+
+  // 3. 정렬: 사용자가 직접 등록한 실제 설교를 최신순으로 맨 앞에, 기본 샘플 예시는 맨 뒤로
+  const allMerged = Array.from(mergedMap.values());
+  const userSermons = allMerged.filter(
+    (s) => !s.meta.isSampleData && !s.meta.id.startsWith('sermon-sample-')
+  );
+  const sampleSermons = allMerged.filter(
+    (s) => Boolean(s.meta.isSampleData) || s.meta.id.startsWith('sermon-sample-')
+  );
+
+  userSermons.sort((a, b) => {
+    const tA = new Date(a.meta.createdAt || a.meta.date || 0).getTime();
+    const tB = new Date(b.meta.createdAt || b.meta.date || 0).getTime();
+    return tB - tA;
+  });
+
+  const finalSermons = [...userSermons, ...sampleSermons];
+
+  entry.sermons = finalSermons;
+  entry.updatedAt = new Date().toISOString();
+  store[key] = entry;
+  saveAccountSermonsStore(store);
+
+  return finalSermons;
+}
+
+export function saveAccountSermonOnServer(
+  licenseKey: string,
+  sermon: SermonRecord
+): SermonRecord[] {
+  if (!sermon || !sermon.meta || !sermon.meta.id) {
+    return syncAccountSermonsOnServer(licenseKey, []);
+  }
+
+  const key = normalizeAccountKey(licenseKey);
+  const store = loadAccountSermonsStore();
+  const entry: AccountSermonsEntry = store[key] || {
+    sermons: [],
+    deletedIds: [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  // 삭제 목록에서 제거 (재등록 시)
+  entry.deletedIds = entry.deletedIds.filter((id) => id !== sermon.meta.id);
+
+  // 기존 동일 ID 제거 후 맨 앞에 삽입
+  const filtered = entry.sermons.filter((s) => s.meta.id !== sermon.meta.id);
+  entry.sermons = [sermon, ...filtered];
+  entry.updatedAt = new Date().toISOString();
+
+  store[key] = entry;
+  saveAccountSermonsStore(store);
+
+  return entry.sermons;
+}
+
+export function deleteAccountSermonOnServer(
+  licenseKey: string,
+  sermonId: string
+): SermonRecord[] {
+  if (!sermonId) {
+    return syncAccountSermonsOnServer(licenseKey, []);
+  }
+
+  const key = normalizeAccountKey(licenseKey);
+  const store = loadAccountSermonsStore();
+  const entry: AccountSermonsEntry = store[key] || {
+    sermons: [],
+    deletedIds: [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (!entry.deletedIds.includes(sermonId)) {
+    entry.deletedIds.push(sermonId);
+  }
+
+  entry.sermons = entry.sermons.filter((s) => s.meta.id !== sermonId);
+  entry.updatedAt = new Date().toISOString();
+
+  store[key] = entry;
+  saveAccountSermonsStore(store);
+
+  return entry.sermons;
+}
+
+export function updateAccountSermonsProfileOnServer(
+  licenseKey: string,
+  pastorName: string,
+  churchName: string
+): SermonRecord[] {
+  const key = normalizeAccountKey(licenseKey);
+  const store = loadAccountSermonsStore();
+  const entry = store[key];
+  if (!entry || !Array.isArray(entry.sermons) || entry.sermons.length === 0) {
+    return [];
+  }
+
+  const cleanPastor = pastorName.trim();
+  const cleanChurch = churchName.trim();
+
+  entry.sermons = entry.sermons.map((s) => ({
+    ...s,
+    meta: {
+      ...s.meta,
+      preacher: cleanPastor || s.meta.preacher,
+      lecturer: cleanPastor || s.meta.lecturer,
+      churchName: cleanChurch || s.meta.churchName,
+      institution: cleanChurch || s.meta.institution,
+    },
+  }));
+  entry.updatedAt = new Date().toISOString();
+
+  store[key] = entry;
+  saveAccountSermonsStore(store);
+
+  return entry.sermons;
 }
