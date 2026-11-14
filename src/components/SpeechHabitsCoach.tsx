@@ -527,7 +527,7 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
           <div className="space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                설교 스피치 코칭 마스터 프롬프트 {v13State.promptVersion}
+                설교 스피치 코칭 마스터 {v13State.promptVersion}
               </span>
               {v13State.capabilities.is_demo_sample ? (
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
