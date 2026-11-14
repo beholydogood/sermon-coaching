@@ -26,7 +26,7 @@ import {
 import { SermonRecord, DeviceAuthInfo, AppReleaseInfo } from './types/sermon';
 import {
   Award,
-  BookOpen,
+  Mic,
   MessageSquare,
   Church,
 } from 'lucide-react';
@@ -35,7 +35,7 @@ export default function App() {
   const [sermons, setSermons] = useState<SermonRecord[]>([]);
   const [activeSermon, setActiveSermon] = useState<SermonRecord | null>(null);
   const [currentTimestamp, setCurrentTimestamp] = useState<number>(0);
-  const [activeMainTab, setActiveMainTab] = useState<'feedback' | 'timeline' | 'coach'>('feedback');
+  const [activeMainTab, setActiveMainTab] = useState<'homiletics' | 'speech' | 'coach' | 'application'>('homiletics');
 
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [isAnalyzeModalOpen, setIsAnalyzeModalOpen] = useState<boolean>(false);
@@ -164,7 +164,7 @@ export default function App() {
     const updated = saveSermonToArchive(newSermon);
     setSermons(updated);
     setActiveSermon(newSermon);
-    setActiveMainTab('feedback');
+    setActiveMainTab('homiletics');
     setCurrentTimestamp(
       typeof newSermon.meta.startTimeSec === 'number' ? newSermon.meta.startTimeSec : 0
     );
@@ -379,9 +379,10 @@ export default function App() {
               overflowX: 'auto',
             }}>
               {([
-                { key: 'feedback', label: '설교학 5대 진단 & 스피치 코칭', icon: <Award style={{ width: 16, height: 16, color: '#fbbf24' }} /> },
-                { key: 'timeline', label: `설교 타임라인 (${activeSermon.timeline.length}구간)`, icon: <BookOpen style={{ width: 16, height: 16, color: '#a5b4fc' }} /> },
-                { key: 'coach',    label: 'AI 설교 코치 1:1 상담',          icon: <MessageSquare style={{ width: 16, height: 16, color: '#fde68a' }} /> },
+                { key: 'homiletics',  label: '설교학 4대 진단',                  icon: <Award style={{ width: 16, height: 16, color: '#fbbf24' }} /> },
+                { key: 'speech',      label: '스피치 딜리버리 & 보컬 코칭',       icon: <Mic style={{ width: 16, height: 16, color: '#a5b4fc' }} /> },
+                { key: 'coach',       label: 'AI 설교 코치 1:1 상담',            icon: <MessageSquare style={{ width: 16, height: 16, color: '#fde68a' }} /> },
+                { key: 'application', label: '🙏 구역 나눔 & 다음 주 개선 플랜', icon: null },
               ] as const).map(({ key, label, icon }) => (
                 <button
                   key={key}
@@ -409,25 +410,34 @@ export default function App() {
 
             {/* 탭 컨텐츠 */}
             <div>
-              {activeMainTab === 'feedback' && (
+              {activeMainTab === 'homiletics' && (
                 <FeedbackDashboard
-                  key={activeSermon.meta.id}
+                  key={`${activeSermon.meta.id}-homiletics`}
                   sermon={activeSermon}
                   onJumpToTimestamp={handleJumpToTimestamp}
+                  section="homiletics"
                 />
               )}
-              {activeMainTab === 'timeline' && (
-                <TimelineSection
-                  key={activeSermon.meta.id}
-                  timeline={activeSermon.timeline}
-                  currentTimestamp={currentTimestamp}
-                  onSeek={(sec) => handleJumpToTimestamp(sec)}
+              {activeMainTab === 'speech' && (
+                <FeedbackDashboard
+                  key={`${activeSermon.meta.id}-speech`}
+                  sermon={activeSermon}
+                  onJumpToTimestamp={handleJumpToTimestamp}
+                  section="speech"
                 />
               )}
               {activeMainTab === 'coach' && (
                 <AiCoachChat
                   key={activeSermon.meta.id}
                   sermon={activeSermon}
+                />
+              )}
+              {activeMainTab === 'application' && (
+                <FeedbackDashboard
+                  key={`${activeSermon.meta.id}-application`}
+                  sermon={activeSermon}
+                  onJumpToTimestamp={handleJumpToTimestamp}
+                  section="application"
                 />
               )}
             </div>

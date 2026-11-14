@@ -1,18 +1,12 @@
 import { useState, useEffect } from 'react';
 import {
-  BookOpen,
-  PlayCircle,
-  Copy,
   Check,
-  Printer,
   Sparkles,
   UserCheck,
-  History,
-  TrendingUp,
+  PanelLeft,
   ShieldCheck,
   Church,
   BookMarked,
-  Settings,
   Download,
   ArrowUpCircle,
   Edit3,
@@ -39,23 +33,16 @@ interface SermonHeaderProps {
 }
 
 export const SermonHeader: React.FC<SermonHeaderProps> = ({
-  onPlayFromStart,
-  onOpenScripture,
-  onPrint,
   onOpenAnalyzeModal,
-  onOpenGrowthModal,
   onOpenBookStudio,
-  onOpenAdminModal,
   onToggleSidebar,
   onUpdateProfile,
-  archiveCount,
   authInfo,
   meta,
   hasUpdateAvailable,
   releaseInfo,
   onApplyUpdate,
 }) => {
-  const [copied, setCopied] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isInstalled, setIsInstalled] = useState(false);
 
@@ -116,20 +103,9 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
     setIsEditingProfile(false);
   };
 
-  const handleCopySummary = () => {
-    const text = `[${churchName} ${preacherName} 주일 설교 피드백 리포트]
-- 설교 제목: ${sermonTitle}
-- 본문 말씀: ${scriptureRef}
-- 설교 일시: ${meta.date}
-- 분석 구간: ${meta.startTimeLabel || '00:00'} ~ 설교 종료`;
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   return (
     <header className="bg-slate-900 text-white border-b border-slate-800 shadow-xl sticky top-0 z-40 backdrop-blur-md bg-opacity-95">
-      {/* ─── 중앙 원격 업데이트 배너 (Feature 5) ─── */}
+      {/* ─── 중앙 원격 업데이트 배너 ─── */}
       {hasUpdateAvailable && (
         <div className="bg-gradient-to-r from-indigo-600 via-indigo-500 to-emerald-600 px-4 py-2 text-xs font-bold text-white flex items-center justify-between shadow-md">
           <div className="flex items-center space-x-2">
@@ -192,31 +168,32 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
             </div>
           </div>
 
-          {/* 우측 퀵 컨트롤 버튼들 */}
+          {/* 우측 퀵 컨트롤 버튼들: 사이드바 -> 새 설교 등록 & 코칭 -> 책 집필 스튜디오 -> 앱 설치 */}
           <div className="flex items-center space-x-2 flex-wrap gap-y-2">
-            {/* 지난 설교 아카이브 버튼 (Feature 1) */}
+            {/* 1. 사이드바 버튼 */}
             {onToggleSidebar && (
               <button
                 onClick={onToggleSidebar}
                 className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-semibold border border-slate-700 shadow-sm transition-all cursor-pointer active:scale-95"
-                title="지난 설교 누적 아카이브 목록 열기/닫기"
+                title="사이드바 열기/닫기"
               >
-                <History className="w-4 h-4 text-indigo-400" />
-                <span>지난 설교 ({archiveCount})</span>
+                <PanelLeft className="w-4 h-4 text-indigo-400" />
+                <span>사이드바</span>
               </button>
             )}
 
-            {/* 성장 리포트 버튼 */}
+            {/* 2. 새 설교 등록 & 코칭 (사이드바와 책 집필 스튜디오 사이 배치) */}
             <button
-              onClick={onOpenGrowthModal}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-amber-300 text-xs font-semibold border border-amber-500/30 shadow-sm transition-all cursor-pointer active:scale-95"
-              title="설교자 회차별 성장 추이 비교"
+              onClick={onOpenAnalyzeModal}
+              style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
+              className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold border border-amber-300 shadow-md shadow-amber-500/30 transition-all cursor-pointer active:scale-95"
+              title="유튜브 설교 링크 또는 영상 파일 등록 및 AI 정밀 분석"
             >
-              <TrendingUp className="w-4 h-4 text-amber-400" />
-              <span className="hidden sm:inline">성장 리포트</span>
+              <Sparkles className="w-4 h-4 text-slate-950" />
+              <span>새 설교 등록 &amp; 코칭</span>
             </button>
 
-            {/* 책 집필 스튜디오 버튼 (Feature 3) */}
+            {/* 3. 책 집필 스튜디오 버튼 */}
             {onOpenBookStudio && (
               <button
                 onClick={onOpenBookStudio}
@@ -229,78 +206,17 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
               </button>
             )}
 
-            {/* 본문 원어 강해 모달 열기 */}
-            <button
-              onClick={onOpenScripture}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-medium border border-slate-700 shadow-sm transition-all cursor-pointer active:scale-95"
-              title="설교 본문 구절 및 성경 원어 묵상 가이드"
-            >
-              <BookOpen className="w-4 h-4 text-amber-400" />
-              <span className="hidden sm:inline">원어 강해</span>
-            </button>
-
-            {/* 설교 시작 지점 재생 */}
-            <button
-              onClick={onPlayFromStart}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium shadow-sm transition-all cursor-pointer active:scale-95"
-              title={`${meta.startTimeLabel || '00:00'}부터 설교 영상 재생`}
-            >
-              <PlayCircle className="w-4 h-4 text-indigo-200" />
-              <span>재생</span>
-            </button>
-
-            {/* 새 설교 등록 & AI 분석 */}
-            <button
-              onClick={onOpenAnalyzeModal}
-              style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold border border-amber-300 shadow-md shadow-amber-500/30 transition-all cursor-pointer active:scale-95"
-              title="유튜브 설교 링크 또는 영상 파일 등록 및 AI 정밀 분석"
-            >
-              <Sparkles className="w-4 h-4 text-slate-950" />
-              <span>새 설교 등록 &amp; 코칭</span>
-            </button>
-
-            {/* 기기 앱 설치 PWA (Feature 4) */}
+            {/* 4. 기기 앱 설치 PWA */}
             {!isInstalled && (
               <button
                 onClick={handleInstallPwa}
-                className="hidden md:inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-semibold border border-emerald-500/30 transition-colors"
+                className="hidden md:inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-semibold border border-emerald-500/30 transition-colors cursor-pointer"
                 title="본 기기에 전용 데스크톱 앱으로 설치"
               >
                 <Download className="w-3.5 h-3.5 text-emerald-400" />
                 <span>앱 설치</span>
               </button>
             )}
-
-            {/* 전용 관리자앱 이동 버튼 (비밀번호 보호됨) */}
-            {onOpenAdminModal && (
-              <button
-                onClick={onOpenAdminModal}
-                className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-emerald-950/60 text-emerald-300 hover:text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors cursor-pointer"
-                title="관리자 전용 앱 열기 (목회자 사용자 등록 및 라이선스 관리)"
-              >
-                <Settings className="w-3.5 h-3.5 text-emerald-400" />
-                <span>관리자앱</span>
-              </button>
-            )}
-
-            {/* 요약 복사 */}
-            <button
-              onClick={handleCopySummary}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700 transition-colors cursor-pointer"
-              title="설교 피드백 요약 복사"
-            >
-              {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-            </button>
-
-            {/* 리포트 인쇄 */}
-            <button
-              onClick={onPrint}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700 transition-colors cursor-pointer"
-              title="피드백 리포트 인쇄/PDF 저장"
-            >
-              <Printer className="w-4 h-4" />
-            </button>
           </div>
         </div>
       </div>

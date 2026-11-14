@@ -49,15 +49,6 @@ export const SermonArchiveSidebar: React.FC<SermonArchiveSidebarProps> = ({
             <p className="text-[11px] text-slate-400">지난 설교와 피드백을 다시 열람합니다</p>
           </div>
         </div>
-
-        <button
-          onClick={onOpenGrowthModal}
-          className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs border border-amber-500/30 flex items-center gap-1 transition-all cursor-pointer"
-          title="회차별 설교 점수 및 스피치 습관 개선 추이 비교"
-        >
-          <TrendingUp className="w-3.5 h-3.5" />
-          <span className="font-semibold text-[11px] hidden sm:inline">성장 리포트</span>
-        </button>
       </div>
 
       {/* 새 설교 등록 버튼 */}
