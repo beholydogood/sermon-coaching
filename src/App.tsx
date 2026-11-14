@@ -18,7 +18,11 @@ import {
   deleteSermonFromArchive,
   updateAllSermonsProfile,
 } from './utils/sermonStorage';
-import { getDeviceAuthInfo, updateDeviceProfileInfo } from './utils/auth';
+import {
+  getDeviceAuthInfo,
+  updateDeviceProfileInfo,
+  verifyCurrentSessionWithServer,
+} from './utils/auth';
 import { SermonRecord, DeviceAuthInfo, AppReleaseInfo } from './types/sermon';
 import {
   Award,
@@ -77,11 +81,30 @@ export default function App() {
     const auth = getDeviceAuthInfo();
     setAuthInfo(auth);
 
-    // 초대 링크(/?key=...)로 접속했거나 미인증 상태이면 인증 모달 표시
+    // 초대 링크(/?key=...)로 접속했거나 미인증 상태이면 인증 모달 표시, 인증 상태이면 관리자앱 서버 DB와 실시간 대조!
     const hasInviteKey =
       typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('key');
     if (!auth.isAuthorized || hasInviteKey) {
       setIsAuthModalOpen(true);
+    } else {
+      verifyCurrentSessionWithServer().then((res) => {
+        if (!res.valid) {
+          setAuthInfo({ isAuthorized: false });
+          setIsAuthModalOpen(true);
+        } else if (res.authInfo) {
+          setAuthInfo(res.authInfo);
+          if (res.authInfo.pastorName || res.authInfo.churchName) {
+            const syncedList = updateAllSermonsProfile(
+              res.authInfo.pastorName || '',
+              res.authInfo.churchName || ''
+            );
+            setSermons(syncedList);
+            setActiveSermon((prev) =>
+              prev ? syncedList.find((s) => s.meta.id === prev.meta.id) || syncedList[0] || prev : syncedList[0] || null
+            );
+          }
+        }
+      });
     }
 
     const archived = getAllArchivedSermons();

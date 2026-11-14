@@ -83,7 +83,7 @@ export const verifyAndAuthorizeDeviceAsync = async (
     if (!res.ok || !data.success) {
       return {
         success: false,
-        message: data.message || '라이선스 인증에 실패했습니다. 관리자에게 문의해 주세요.',
+        message: data.message || '관리자앱에 등록되지 않은 라이선스 키입니다. 관리자에게 문의해 주세요.',
       };
     }
 
@@ -104,31 +104,72 @@ export const verifyAndAuthorizeDeviceAsync = async (
       message: data.message || '본 기기가 정식 인가되었습니다.',
       authInfo,
     };
-  } catch (err) {
-    // 네트워크 일시 장애 시 로컬 기본 검증 폴백
-    if (trimmedKey.startsWith('SERMON-') || trimmedKey === 'ADMIN-MASTER-2026' || trimmedKey === 'GRACE-COACH-777') {
-      const fallbackAuth: DeviceAuthInfo = {
-        isAuthorized: true,
-        authorizedKey: trimmedKey,
-        licenseKey: trimmedKey,
-        pastorName: pastorName.trim() || '담임목사',
-        churchName: churchName.trim() || '소속교회',
-        role: trimmedKey === 'ADMIN-MASTER-2026' ? 'admin' : 'pastor',
-        deviceId,
-        authorizedAt: new Date().toLocaleString('ko-KR'),
-      };
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(fallbackAuth));
-      return {
-        success: true,
-        message: '오프라인 모드에서 기기가 인가되었습니다.',
-        authInfo: fallbackAuth,
-      };
-    }
-
+  } catch {
     return {
       success: false,
       message: '서버 연결 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
     };
+  }
+};
+
+/**
+ * 스튜디오 실행 시 브라우저에 저장된 인증 정보가 관리자앱(서버 DB)에 실제로 등록·활성화되어 있는지 검증
+ * 관리자앱에 없거나 삭제/차단된 계정이면 즉시 로컬 세션을 파기하고 인증 모달을 띄웁니다.
+ */
+export const verifyCurrentSessionWithServer = async (): Promise<{
+  valid: boolean;
+  message?: string;
+  authInfo?: DeviceAuthInfo;
+}> => {
+  const localAuth = getDeviceAuthInfo();
+  if (!localAuth.isAuthorized) {
+    return { valid: false };
+  }
+
+  const deviceId = localAuth.deviceId || getOrCreateDeviceId();
+  const deviceLabel = getReadableClientDeviceLabel();
+
+  try {
+    const res = await fetch('/api/auth/verify-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        licenseKey: localAuth.licenseKey || localAuth.authorizedKey || '',
+        pastorName: localAuth.pastorName || '',
+        churchName: localAuth.churchName || '',
+        deviceId,
+        deviceLabel,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.valid) {
+      revokeDeviceAuthorization();
+      return {
+        valid: false,
+        message: data.message || '관리자앱에 등록되지 않은 계정입니다.',
+      };
+    }
+
+    if (data.authInfo) {
+      const synced: DeviceAuthInfo = {
+        isAuthorized: true,
+        authorizedKey: data.authInfo.licenseKey,
+        licenseKey: data.authInfo.licenseKey,
+        pastorName: data.authInfo.pastorName,
+        churchName: data.authInfo.churchName,
+        role: data.authInfo.role || 'pastor',
+        deviceId: data.authInfo.deviceId || deviceId,
+        authorizedAt: data.authInfo.authorizedAt,
+      };
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(synced));
+      return { valid: true, authInfo: synced };
+    }
+
+    return { valid: true, authInfo: localAuth };
+  } catch {
+    // 일시적 오프라인 시에는 기존 상태 유지
+    return { valid: true, authInfo: localAuth };
   }
 };
 
@@ -137,17 +178,29 @@ export const updateDeviceProfileInfo = (
   churchName: string
 ): DeviceAuthInfo => {
   const current = getDeviceAuthInfo();
+  const key = current.licenseKey || current.authorizedKey || '';
   const updated: DeviceAuthInfo = {
     ...current,
     isAuthorized: current.isAuthorized ?? true,
-    authorizedKey: current.authorizedKey || current.licenseKey || 'SERMON-VIP-2026',
-    licenseKey: current.licenseKey || current.authorizedKey || 'SERMON-VIP-2026',
+    authorizedKey: key,
+    licenseKey: key,
     pastorName: pastorName.trim() || current.pastorName || '담임목사',
     churchName: churchName.trim() || current.churchName || '소속교회',
   };
 
   try {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
+    if (key) {
+      fetch('/api/auth/update-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          licenseKey: key,
+          pastorName: updated.pastorName,
+          churchName: updated.churchName,
+        }),
+      }).catch(() => {});
+    }
   } catch (e) {
     console.error('Failed to update profile in localStorage', e);
   }

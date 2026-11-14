@@ -23,6 +23,7 @@ import {
   removeRegisteredDevice,
   importLicenseUsers,
   verifyAndRegisterDeviceOnServer,
+  verifyActiveSessionOnServer,
 } from './src/utils/userStoreServer';
 
 dotenv.config();
@@ -1364,6 +1365,36 @@ app.post('/api/auth/verify', (req, res) => {
     return res.json(result);
   }
   return res.status(401).json(result);
+});
+
+// 스튜디오 접속 시 브라우저 로컬 캐시 세션이 관리자앱에 실제 등록·활성화되어 있는지 실시간 검증 API
+app.post('/api/auth/verify-session', (req, res) => {
+  const { licenseKey, pastorName, churchName, deviceId, deviceLabel } = req.body || {};
+  const userAgent = req.headers['user-agent'] || '';
+
+  const result = verifyActiveSessionOnServer({
+    licenseKey,
+    pastorName,
+    churchName,
+    deviceId,
+    deviceLabel,
+    userAgent,
+  });
+
+  if (result.valid) {
+    return res.json({ success: true, ...result });
+  }
+  return res.status(401).json({ success: false, ...result });
+});
+
+// 스튜디오 상단에서 목회자 성함/교회명 수정 시 관리자앱(users.json)에도 실시간 동기화
+app.post('/api/auth/update-profile', (req, res) => {
+  const { licenseKey, pastorName, churchName } = req.body || {};
+  if (!licenseKey) {
+    return res.status(400).json({ success: false, message: '라이선스 키가 필요합니다.' });
+  }
+  const result = updateLicenseUser(licenseKey, { pastorName, churchName });
+  return res.json(result);
 });
 
 // Vite 개발 서버 또는 프로덕션 정적 서빙
