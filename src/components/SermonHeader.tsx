@@ -114,7 +114,7 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
   const handleTestPersonalKey = async () => {
     const trimmed = editPersonalKey.trim();
     if (!trimmed) {
-      setKeyTestMsg({ ok: false, text: '테스트할 Gemini API 키(AIzaSy...)를 입력해 주세요.' });
+      setKeyTestMsg({ ok: false, text: '테스트할 Gemini API 키(AQ... 또는 AIzaSy...)를 입력해 주세요.' });
       return;
     }
     setTestingKey(true);
@@ -338,14 +338,14 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
                   </a>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  구글 AI 스튜디오에서 무료로 발급받은 본인 키(`AIzaSy...`)를 입력하시면, 다른 사용자와 할당량을 공유하지 않고 본인 기기에서만 안전하게 AI 심층·영상 분석을 사용합니다.
+                  구글 AI 스튜디오에서 무료로 발급받은 본인 키(`AQ...` 또는 `AIzaSy...`)를 입력하시면, 다른 사용자와 할당량을 공유하지 않고 본인 기기에서만 안전하게 AI 심층·영상 분석을 사용합니다.
                 </p>
                 <div className="flex gap-1.5">
                   <input
                     type="password"
                     value={editPersonalKey}
                     onChange={(e) => setEditPersonalKey(e.target.value)}
-                    placeholder="AIzaSy... (본인 기기에만 저장됨)"
+                    placeholder="AQ... 또는 AIzaSy... (본인 기기에만 저장됨)"
                     className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-hidden focus:border-amber-400"
                   />
                   <button

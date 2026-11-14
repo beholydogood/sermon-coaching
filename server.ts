@@ -111,16 +111,32 @@ app.post('/api/auth/test-gemini-key', async (req, res) => {
     if (!ai) {
       return res.status(400).json({
         success: false,
-        message: '유효한 형식의 Gemini API 키(AIzaSy...)를 입력해 주세요.',
+        message: '유효한 형식의 Gemini API 키(AQ... 또는 AIzaSy...)를 입력해 주세요.',
       });
     }
-    const testRes = await Promise.race([
-      ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [{ role: 'user', parts: [{ text: '연결 확인: OK만 출력하세요.' }] }],
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('응답 시간 초과')), 8000)),
-    ]);
+
+    let testRes: any = null;
+    let lastErr: any = null;
+    const candidateModels = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+    for (const modelName of candidateModels) {
+      try {
+        testRes = await Promise.race([
+          ai.models.generateContent({
+            model: modelName,
+            contents: [{ role: 'user', parts: [{ text: '연결 확인: OK만 출력하세요.' }] }],
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('응답 시간 초과')), 8000)),
+        ]);
+        if (testRes) break;
+      } catch (err: any) {
+        lastErr = err;
+      }
+    }
+
+    if (!testRes) {
+      throw lastErr || new Error('모델 연결 실패');
+    }
+
     return res.json({
       success: true,
       message: '본인 전용 Gemini API 키 연결이 정상 확인되었습니다! (타인과 공유되지 않고 본인 기기에만 저장됩니다)',
@@ -277,7 +293,7 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
     let analysisResult: any = null;
 
     if (ai) {
-      for (const modelName of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+      for (const modelName of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
         try {
           const prompt = `당신은 대한민국 최고 권위의 설교학(Homiletics) 교수이자 목회자 스피치 코칭 위원장입니다.
 다음 설교 영상 정보를 바탕으로 설교학 5대 지표 및 스피치·바디랭귀지 습관(말투, 손버릇, 시선처리, 틱 동작)을 정밀 진단한 리포트를 JSON으로 작성해 주세요.
@@ -982,22 +998,30 @@ ${ytDetails.sermonTranscriptExcerpt ? `- 실제 설교 음성 자막 발췌 (${s
 ${JSON.stringify(specInputPayload)}`,
         });
 
-        const v13CoachResponse = await Promise.race([
-          ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [
-              {
-                role: 'user',
-                parts: userParts,
-              },
-            ],
-            config: {
-              systemInstruction: masterPromptV13,
-              responseMimeType: 'application/json',
-            },
-          }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('v13 timeout')), 14000)),
-        ]);
+        let v13CoachResponse: any = null;
+        for (const modelName of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
+          try {
+            v13CoachResponse = await Promise.race([
+              ai.models.generateContent({
+                model: modelName,
+                contents: [
+                  {
+                    role: 'user',
+                    parts: userParts,
+                  },
+                ],
+                config: {
+                  systemInstruction: masterPromptV13,
+                  responseMimeType: 'application/json',
+                },
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('v13 timeout')), 14000)),
+            ]);
+            if (v13CoachResponse?.text) break;
+          } catch (mErr) {
+            // fallback to next model
+          }
+        }
 
         const v13Parsed = JSON.parse((v13CoachResponse as any).text || '{}');
         if (v13Parsed.coreConclusion) {
@@ -1250,11 +1274,19 @@ app.post('/api/chat-coach', async (req, res) => {
       parts: [{ text: message }],
     });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents,
-      config: { systemInstruction },
-    });
+    let response: any = null;
+    for (const modelName of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents,
+          config: { systemInstruction },
+        });
+        if (response?.text) break;
+      } catch (chatErr) {
+        // try next model
+      }
+    }
 
     return res.json({ reply: response.text || '' });
   } catch (error: any) {
@@ -1281,20 +1313,28 @@ app.post('/api/book/extract-material', async (req, res) => {
     if (ai && ext === 'pdf' && parsed.extractedText.length < 120) {
       try {
         const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-        const aiRes = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { inlineData: { mimeType: 'application/pdf', data: cleanBase64 } },
+        let aiRes: any = null;
+        for (const modelName of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
+          try {
+            aiRes = await ai.models.generateContent({
+              model: modelName,
+              contents: [
                 {
-                  text: '이 PDF 문서의 핵심 주제, 성경 주해 내용, 목회적 통찰, 중요 인용구들을 책 집필에 바로 활용할 수 있도록 한국어로 상세히 추출·요약해 주세요 (800자 내외).',
+                  role: 'user',
+                  parts: [
+                    { inlineData: { mimeType: 'application/pdf', data: cleanBase64 } },
+                    {
+                      text: '이 PDF 문서의 핵심 주제, 성경 주해 내용, 목회적 통찰, 중요 인용구들을 책 집필에 바로 활용할 수 있도록 한국어로 상세히 추출·요약해 주세요 (800자 내외).',
+                    },
+                  ],
                 },
               ],
-            },
-          ],
-        });
+            });
+            if (aiRes?.text) break;
+          } catch (mErr) {
+            // try next model
+          }
+        }
         if (aiRes.text && aiRes.text.trim().length > 30) {
           parsed.extractedText = aiRes.text.trim();
           parsed.summaryPoint = aiRes.text.trim().split('\n')[0].slice(0, 150);
@@ -1398,11 +1438,19 @@ ${materialsBrief}
   ]
 }`;
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          config: { responseMimeType: 'application/json' },
-        });
+        let response: any = null;
+        for (const modelName of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
+          try {
+            response = await ai.models.generateContent({
+              model: modelName,
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              config: { responseMimeType: 'application/json' },
+            });
+            if (response?.text) break;
+          } catch (mErr) {
+            // try next model
+          }
+        }
 
         const parsed = JSON.parse(response.text || '{}');
         if (parsed.proposal && Array.isArray(parsed.chapters) && parsed.chapters.length >= 3) {
@@ -1450,10 +1498,18 @@ ${chapter.manuscriptDraft}
 
 강단 구어체의 군더더기('성도 여러분', '아멘 하시기 바랍니다', '이제...' 등)를 완전히 탈피하여, 독자가 혼자 읽으며 깊은 눈물과 영적 회복을 경험할 수 있는 완성도 높은 출판 원고(최소 900자 이상) 본문 텍스트만 깔끔하게 작성해 주세요.`;
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        });
+        let response: any = null;
+        for (const modelName of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
+          try {
+            response = await ai.models.generateContent({
+              model: modelName,
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            });
+            if (response?.text) break;
+          } catch (mErr) {
+            // try next model
+          }
+        }
 
         if (response.text) {
           return res.json({ success: true, manuscriptDraft: response.text });

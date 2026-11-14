@@ -590,14 +590,14 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
               </a>
             </div>
             <p className="text-[11px] text-slate-300 leading-relaxed">
-              • 다른 목회자들과 서버 API 키를 공유하지 않고, 본인의 구글 무료 API 키(`AIzaSy...`)를 본 기기 브라우저에만 독립 저장하여 사용합니다. 키를 연결하면 자막 분석뿐 아니라 **실제 설교 구간 영상(시선·손동작) 및 음성(강세·끝맺음) 멀티모달 분석**이 함께 작동합니다.
+              • 다른 목회자들과 서버 API 키를 공유하지 않고, 본인의 구글 무료 API 키(`AQ...` 또는 `AIzaSy...`)를 본 기기 브라우저에만 독립 저장하여 사용합니다. 키를 연결하면 자막 분석뿐 아니라 **실제 설교 구간 영상(시선·손동작) 및 음성(강세·끝맺음) 멀티모달 분석**이 함께 작동합니다.
             </p>
             <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="password"
                 value={personalKeyInput}
                 onChange={(e) => setPersonalKeyInput(e.target.value)}
-                placeholder="AIzaSy... 형식의 본인 Gemini API 키 붙여넣기"
+                placeholder="AQ... 또는 AIzaSy... 형식의 본인 Gemini API 키 붙여넣기"
                 className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono"
               />
               <button
