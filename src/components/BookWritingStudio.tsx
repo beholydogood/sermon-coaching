@@ -32,6 +32,7 @@ import {
   BookChapterDraft,
 } from '../types/sermon';
 import { buildStrategicBookPlan } from '../utils/bookGenerator';
+import { getPersonalGeminiApiKey } from '../utils/auth';
 
 interface BookWritingStudioProps {
   isOpen: boolean;
@@ -269,7 +270,10 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
           try {
             const res = await fetch('/api/book/extract-material', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-user-gemini-key': getPersonalGeminiApiKey(),
+              },
               body: JSON.stringify({ fileName: file.name, base64Data }),
             });
             if (res.ok) {
@@ -377,7 +381,10 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
     try {
       const res = await fetch('/api/book/generate-proposal', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-gemini-key': getPersonalGeminiApiKey(),
+        },
         body: JSON.stringify({
           bookType,
           writingStyle,
@@ -415,7 +422,10 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
     try {
       const res = await fetch('/api/book/generate-chapter', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-gemini-key': getPersonalGeminiApiKey(),
+        },
         body: JSON.stringify({
           chapter: targetChapter,
           writingStyle,

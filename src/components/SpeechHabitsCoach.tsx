@@ -41,6 +41,11 @@ import {
   KIM_WOOJUN_PRELIMINARY_REPORT,
 } from '../data/speechReferenceLibrary';
 import { formatSecToMmSs, parseTimeStringToSec } from '../utils/youtubeSermonDetector';
+import {
+  getPersonalGeminiApiKey,
+  setPersonalGeminiApiKey,
+  hasPersonalGeminiApiKey,
+} from '../utils/auth';
 
 interface SpeechHabitsCoachProps {
   sermon?: SermonRecord;
@@ -152,6 +157,58 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
   const [refFilter, setRefFilter] = useState<
     'recommended' | 'kim_woojun' | 'all_26' | 'coverage_gaps'
   >('kim_woojun');
+
+  // 방식 B: 목회자 개인 Gemini API 키 인라인 설정 상태
+  const [showKeyPanel, setShowKeyPanel] = useState(false);
+  const [personalKeyInput, setPersonalKeyInput] = useState(() => getPersonalGeminiApiKey());
+  const [hasPersonalKey, setHasPersonalKey] = useState(() => hasPersonalGeminiApiKey());
+  const [testingPersonalKey, setTestingPersonalKey] = useState(false);
+
+  const handleSaveAndTestPersonalKey = async () => {
+    const trimmed = personalKeyInput.trim();
+    setPersonalGeminiApiKey(trimmed);
+    setHasPersonalKey(hasPersonalGeminiApiKey());
+    if (!trimmed) {
+      setSaveFeedback({
+        type: 'success',
+        msg: '개인 Gemini API 키가 기기에서 제거되었습니다. (자막·규칙 기반 코칭 모드로 동작합니다)',
+      });
+      setTimeout(() => setSaveFeedback(null), 4000);
+      return;
+    }
+    setTestingPersonalKey(true);
+    try {
+      const res = await fetch('/api/auth/test-gemini-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-gemini-key': trimmed,
+        },
+        body: JSON.stringify({ userGeminiApiKey: trimmed }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setShowKeyPanel(false);
+        setSaveFeedback({
+          type: 'success',
+          msg: data.message || '본인 전용 Gemini API 키가 연결·저장되었습니다!',
+        });
+      } else {
+        setSaveFeedback({
+          type: 'error',
+          msg: data.message || 'API 키 확인에 실패했습니다.',
+        });
+      }
+    } catch {
+      setSaveFeedback({
+        type: 'error',
+        msg: '네트워크 오류로 키 테스트에 실패했습니다.',
+      });
+    } finally {
+      setTestingPersonalKey(false);
+      setTimeout(() => setSaveFeedback(null), 5000);
+    }
+  };
 
   const notifyAndPersist = (nextV13: SpeechCoachingV13Data, successMessage: string) => {
     setV13State(nextV13);
@@ -487,15 +544,73 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
             </h3>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsEditingTarget(!isEditingTarget)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 font-semibold border border-slate-700 cursor-pointer shrink-0"
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-            <span>{isEditingTarget ? ' 닫기' : '대상·구간·제외순서 직접 정정'}</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setPersonalKeyInput(getPersonalGeminiApiKey());
+                setShowKeyPanel(!showKeyPanel);
+              }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold border cursor-pointer ${
+                hasPersonalKey
+                  ? 'bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border-emerald-500/40'
+                  : 'bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 border-amber-500/40'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{hasPersonalKey ? '내 AI 키 연결됨 (설정)' : '개인 AI 키 등록 (방식 B)'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsEditingTarget(!isEditingTarget)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 font-semibold border border-slate-700 cursor-pointer"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+              <span>{isEditingTarget ? ' 닫기' : '대상·구간·제외순서 직접 정정'}</span>
+            </button>
+          </div>
         </div>
+
+        {/* 방식 B: 목회자 개인 무료 Gemini API 키 등록 패널 */}
+        {showKeyPanel && (
+          <div className="p-4 rounded-xl bg-slate-900 border border-amber-500/40 space-y-2.5">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="font-bold text-amber-300">
+                🔑 본인 전용 무료 Gemini API 키 등록 (방식 B — 각 목회자 개별 키 사용)
+              </div>
+              <a
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-indigo-300 hover:underline font-semibold"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Google AI Studio에서 무료 키 발급받기</span>
+              </a>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              • 다른 목회자들과 서버 API 키를 공유하지 않고, 본인의 구글 무료 API 키(`AIzaSy...`)를 본 기기 브라우저에만 독립 저장하여 사용합니다. 키를 연결하면 자막 분석뿐 아니라 **실제 설교 구간 영상(시선·손동작) 및 음성(강세·끝맺음) 멀티모달 분석**이 함께 작동합니다.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="password"
+                value={personalKeyInput}
+                onChange={(e) => setPersonalKeyInput(e.target.value)}
+                placeholder="AIzaSy... 형식의 본인 Gemini API 키 붙여넣기"
+                className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono"
+              />
+              <button
+                type="button"
+                disabled={testingPersonalKey}
+                onClick={handleSaveAndTestPersonalKey}
+                className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold cursor-pointer shrink-0"
+              >
+                {testingPersonalKey ? '연결 확인 중...' : '본인 기기에 저장 및 연결 확인'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 모달리티 연결 상태 표시 (가짜 완료 화면 방지) */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">

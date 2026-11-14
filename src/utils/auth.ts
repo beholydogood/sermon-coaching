@@ -213,3 +213,37 @@ export const revokeDeviceAuthorization = () => {
     localStorage.removeItem(AUTH_STORAGE_KEY);
   }
 };
+
+// ==========================================
+// 방식 B: 목회자 개인별 Gemini API 키 (본인 브라우저·기기에만 독립 저장)
+// ==========================================
+const PERSONAL_GEMINI_KEY_STORAGE = 'sermon_coaching_personal_gemini_key_v1';
+
+export const getPersonalGeminiApiKey = (): string => {
+  if (typeof window === 'undefined') return '';
+  try {
+    return (localStorage.getItem(PERSONAL_GEMINI_KEY_STORAGE) || '').trim();
+  } catch {
+    return '';
+  }
+};
+
+export const setPersonalGeminiApiKey = (apiKey: string): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    const trimmed = (apiKey || '').trim();
+    if (trimmed) {
+      localStorage.setItem(PERSONAL_GEMINI_KEY_STORAGE, trimmed);
+    } else {
+      localStorage.removeItem(PERSONAL_GEMINI_KEY_STORAGE);
+    }
+    window.dispatchEvent(new Event('personal-gemini-key-updated'));
+  } catch (e) {
+    console.error('Failed to save personal Gemini API key:', e);
+  }
+};
+
+export const hasPersonalGeminiApiKey = (): boolean => {
+  return getPersonalGeminiApiKey().length >= 15;
+};
+

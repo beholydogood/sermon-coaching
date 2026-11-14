@@ -86,11 +86,12 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '30mb' }));
 
-// GoogleGenAI 클라이언트 초기화 (환경변수 또는 관리자 설정 키 지원)
-const getAiClient = () => {
-  const runtime = loadRuntimeSettings();
-  const apiKey = runtime.geminiApiKey || process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+// 방식 B: 목회자 개인별 Gemini API 키 전용 클라이언트 초기화 (중앙 키 공유 없음)
+const getAiClient = (req?: express.Request) => {
+  const headerKey = req ? String(req.headers['x-user-gemini-key'] || '').trim() : '';
+  const bodyKey = req && req.body ? String(req.body.userGeminiApiKey || '').trim() : '';
+  const apiKey = headerKey || bodyKey;
+  if (!apiKey || apiKey.length < 15) {
     return null;
   }
   return new GoogleGenAI({
@@ -102,6 +103,36 @@ const getAiClient = () => {
     },
   });
 };
+
+// API: 목회자 개인 Gemini API 키 유효성 1초 테스트
+app.post('/api/auth/test-gemini-key', async (req, res) => {
+  try {
+    const ai = getAiClient(req);
+    if (!ai) {
+      return res.status(400).json({
+        success: false,
+        message: '유효한 형식의 Gemini API 키(AIzaSy...)를 입력해 주세요.',
+      });
+    }
+    const testRes = await Promise.race([
+      ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts: [{ text: '연결 확인: OK만 출력하세요.' }] }],
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('응답 시간 초과')), 8000)),
+    ]);
+    return res.json({
+      success: true,
+      message: '본인 전용 Gemini API 키 연결이 정상 확인되었습니다! (타인과 공유되지 않고 본인 기기에만 저장됩니다)',
+      sample: (testRes as any)?.text?.slice(0, 20) || 'OK',
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      success: false,
+      message: `API 키 인증 실패: 키 값을 다시 확인해 주세요. (${err?.message || '오류'})`,
+    });
+  }
+});
 
 // 기본 대표 설교 컨텍스트
 const DEFAULT_SERMON_CONTEXT = {
@@ -220,7 +251,7 @@ const handleAnalyzeSermon = async (req: express.Request, res: express.Response) 
     const startRemSec = startSec % 60;
     const startTimeLabel = `${String(startMin).padStart(2, '0')}분 ${String(startRemSec).padStart(2, '0')}초`;
 
-    const ai = getAiClient();
+    const ai = getAiClient(req);
     const rawUserTitle = title.trim() !== '주일 강해 설교' ? title.trim() : '';
     const resolvedTitle =
       rawUserTitle ||
@@ -918,26 +949,46 @@ ${ytDetails.sermonTranscriptExcerpt ? `- 실제 설교 음성 자막 발췌 (${s
           ),
         };
 
+        const userParts: any[] = [];
+        // 유튜브 영상이고 개인 API 키가 연결된 경우: 확인된 설교 구간(startOffset ~ endOffset) 멀티모달 직접 시청·청취 연결
+        const multimodalEndSec = Math.min(audioIv.endSec, audioIv.startSec + 900);
+        if (!isFileMode && youtubeUrl) {
+          userParts.push({
+            fileData: {
+              fileUri: `https://www.youtube.com/watch?v=${videoId}`,
+              mimeType: 'video/mp4',
+            },
+            videoMetadata: {
+              startOffset: `${audioIv.startSec}s`,
+              endOffset: `${multimodalEndSec}s`,
+            },
+          });
+        }
+
+        userParts.push({
+          text: `아래 제공된 설교 스피치 분석 입력 JSON(docs/sermon_app_spec.md 규격)과 실제 설교 구간(${audioIv.startSec}초~${multimodalEndSec}초) 영상·음성을 바탕으로, 마스터 프롬프트 v1.3 지침을 엄격히 준수하여 JSON으로 응답하세요.
+반드시 확인된 대상 설교자의 설교 적격 구간 안의 실제 근거만 사용하고, 찬양·봉독·광고·사회·수어통역·회중 화면은 설교자 지표에서 제외하세요.
+응답 JSON 형식:
+{
+  "coreConclusion": "이번 영상에서 가장 중요한 스피치 코칭 핵심 결론 (2~3문장, 존댓말)",
+  "contextPriorityFocus": ["이번 행사·전달방식·청중 조합에서 우선 살핀 전달 기능 1", "기능 2"],
+  "multimodalObserved": true,
+  "gazeAndManuscriptSummary": "설교 적격 구간에서 실제 관찰된 시선 분포 및 본문 낭독 vs 설명 시 원고 전환 요약 (가림/측면 카메라이면 해당 조건 명시)",
+  "gestureSummary": "설교 적격 구간에서 실제 관찰된 손동작(의미 제스처 vs 반복 손동작) 요약 (강대상 가림 시 평가 보류 명시)",
+  "prosodySummary": "실제 음성에서 들리는 핵심 단어 강세·쉼·문장 끝맺음 명료도 요약"
+}
+
+[입력 자료 JSON]
+${JSON.stringify(specInputPayload)}`,
+        });
+
         const v13CoachResponse = await Promise.race([
           ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: [
               {
                 role: 'user',
-                parts: [
-                  {
-                    text: `아래 제공된 설교 스피치 분석 입력 JSON(docs/sermon_app_spec.md 규격)을 바탕으로, 마스터 프롬프트 v1.3 지침을 엄격히 준수하여 JSON으로 응답하세요.
-반드시 확인된 대상 설교자의 설교 적격 구간(${audioIv.startSec}초~${audioIv.endSec}초) 안의 실제 근거만 사용하고, capabilities.continuous_video_access가 false이면 시선·손동작·표정을 보았다고 단정하지 마세요.
-응답 JSON 형식:
-{
-  "coreConclusion": "이번 영상에서 가장 중요한 스피치 코칭 핵심 결론 (2~3문장, 존댓말)",
-  "contextPriorityFocus": ["이번 행사·전달방식·청중 조합에서 우선 살핀 전달 기능 1", "기능 2"]
-}
-
-[입력 자료 JSON]
-${JSON.stringify(specInputPayload)}`,
-                  },
-                ],
+                parts: userParts,
               },
             ],
             config: {
@@ -945,7 +996,7 @@ ${JSON.stringify(specInputPayload)}`,
               responseMimeType: 'application/json',
             },
           }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('v13 timeout')), 10000)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('v13 timeout')), 14000)),
         ]);
 
         const v13Parsed = JSON.parse((v13CoachResponse as any).text || '{}');
@@ -954,6 +1005,48 @@ ${JSON.stringify(specInputPayload)}`,
         }
         if (Array.isArray(v13Parsed.contextPriorityFocus) && v13Parsed.contextPriorityFocus.length > 0) {
           baseV13.contextPriorityFocus = v13Parsed.contextPriorityFocus;
+        }
+        if (v13Parsed.multimodalObserved && !isFileMode) {
+          baseV13.capabilities.continuous_video_access = true;
+          baseV13.capabilities.audio_access = true;
+          baseV13.capabilities.ai_model_connected = true;
+          baseV13.capabilities.modality_note =
+            '목회자 개인 Gemini API 키를 통해 실제 설교 구간(startOffset~endOffset) 멀티모달 영상·음성 및 시간 정보 자막 통합 분석 완료';
+
+          baseV13.measurements = baseV13.measurements.map((m) => {
+            if (m.metricId === 'gaze_and_manuscript' && v13Parsed.gazeAndManuscriptSummary) {
+              return {
+                ...m,
+                assessable: true,
+                value: v13Parsed.gazeAndManuscriptSummary,
+                numeratorLabel: 'Gemini 2.5 멀티모달 설교 구간 시각 관찰',
+                toolSource: 'Gemini 2.5 Flash Multimodal Video Inspector (Personal Key)',
+              };
+            }
+            if (
+              m.metricId === 'hand_gestures_normalized' &&
+              v13Parsed.gestureSummary &&
+              !(baseV13.speakerContext.camera_and_editing || '').includes('손 가림')
+            ) {
+              return {
+                ...m,
+                assessable: true,
+                value: v13Parsed.gestureSummary,
+                numeratorLabel: 'Gemini 2.5 멀티모달 설교 구간 손동작 관찰',
+                toolSource: 'Gemini 2.5 Flash Multimodal Video Inspector (Personal Key)',
+              };
+            }
+            if (m.metricId === 'acoustic_timbre_prosody' && v13Parsed.prosodySummary) {
+              return {
+                ...m,
+                assessable: true,
+                value: v13Parsed.prosodySummary,
+                numeratorLabel: 'Gemini 2.5 멀티모달 설교 구간 음성 관찰',
+                toolSource: 'Gemini 2.5 Flash Multimodal Audio Inspector (Personal Key)',
+              };
+            }
+            return m;
+          });
         }
       } catch (v13Err: any) {
         console.warn('Speech Coach v1.3 AI refinement notice:', v13Err?.message);
@@ -1053,7 +1146,7 @@ app.post('/api/speech-coach/re-evaluate', async (req, res) => {
       }
     }
 
-    const ai = getAiClient();
+    const ai = getAiClient(req);
     const { v13, computedPaceLabel } = buildSpeechCoachingV13Data({
       videoId: ytId || videoId || 'sermon-video',
       sermonTitle,
@@ -1097,7 +1190,7 @@ app.post('/api/chat-coach', async (req, res) => {
       return res.status(400).json({ error: 'Message is required.' });
     }
 
-    const ai = getAiClient();
+    const ai = getAiClient(req);
     if (!ai) {
       // API 키 미설정 시에도 정교하고 목회적인 답변 반환
       if (message.includes('도입') || message.includes('오프닝') || message.includes('시작')) {
@@ -1184,7 +1277,7 @@ app.post('/api/book/extract-material', async (req, res) => {
 
     // PDF 등 이미지성 문서이거나 AI 요약 보강이 가능한 경우 Gemini 멀티모달로 실제 텍스트 정밀 추출
     const ext = (fileName.split('.').pop() || '').toLowerCase();
-    const ai = getAiClient();
+    const ai = getAiClient(req);
     if (ai && ext === 'pdf' && parsed.extractedText.length < 120) {
       try {
         const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
@@ -1242,7 +1335,7 @@ app.post('/api/book/generate-proposal', async (req, res) => {
       materials: materialList,
     });
 
-    const ai = getAiClient();
+    const ai = getAiClient(req);
     if (ai && sermonList.length > 0) {
       try {
         const sermonsBrief = sermonList

@@ -23,6 +23,7 @@ import {
 } from '../utils/sermonAnalyzer';
 import { getAllArchivedSermons } from '../utils/sermonStorage';
 import { buildSpeechCoachingV13Data } from '../utils/speechCoachingEngineV13';
+import { getPersonalGeminiApiKey } from '../utils/auth';
 
 interface AnalyzeSermonModalProps {
   isOpen: boolean;
@@ -256,7 +257,10 @@ export const AnalyzeSermonModal: React.FC<AnalyzeSermonModalProps> = ({
 
           const response = await fetch('/api/analyze-sermon', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-gemini-key': getPersonalGeminiApiKey(),
+            },
             body: JSON.stringify(payload),
           });
 

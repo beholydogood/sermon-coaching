@@ -13,6 +13,11 @@ import {
   X,
 } from 'lucide-react';
 import { SermonMeta, DeviceAuthInfo, AppReleaseInfo } from '../types/sermon';
+import {
+  getPersonalGeminiApiKey,
+  setPersonalGeminiApiKey,
+  hasPersonalGeminiApiKey,
+} from '../utils/auth';
 
 interface SermonHeaderProps {
   onPlayFromStart: () => void;
@@ -46,10 +51,20 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isInstalled, setIsInstalled] = useState(false);
 
-  // 이름 / 교회 수정 모달 상태
+  // 이름 / 교회 / 개인 AI 키 수정 모달 상태
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editPastorName, setEditPastorName] = useState('');
   const [editChurchName, setEditChurchName] = useState('');
+  const [editPersonalKey, setEditPersonalKey] = useState('');
+  const [hasKey, setHasKey] = useState<boolean>(() => hasPersonalGeminiApiKey());
+  const [testingKey, setTestingKey] = useState(false);
+  const [keyTestMsg, setKeyTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    const syncKeyState = () => setHasKey(hasPersonalGeminiApiKey());
+    window.addEventListener('personal-gemini-key-updated', syncKeyState);
+    return () => window.removeEventListener('personal-gemini-key-updated', syncKeyState);
+  }, []);
 
   useEffect(() => {
     const handler = (e: any) => {
@@ -91,12 +106,42 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
   const openProfileEditor = () => {
     setEditPastorName(preacherName);
     setEditChurchName(churchName);
+    setEditPersonalKey(getPersonalGeminiApiKey());
+    setKeyTestMsg(null);
     setIsEditingProfile(true);
+  };
+
+  const handleTestPersonalKey = async () => {
+    const trimmed = editPersonalKey.trim();
+    if (!trimmed) {
+      setKeyTestMsg({ ok: false, text: '테스트할 Gemini API 키(AIzaSy...)를 입력해 주세요.' });
+      return;
+    }
+    setTestingKey(true);
+    setKeyTestMsg(null);
+    try {
+      const res = await fetch('/api/auth/test-gemini-key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-gemini-key': trimmed,
+        },
+        body: JSON.stringify({ userGeminiApiKey: trimmed }),
+      });
+      const data = await res.json();
+      setKeyTestMsg({ ok: Boolean(data.success), text: data.message || '확인 완료' });
+    } catch {
+      setKeyTestMsg({ ok: false, text: '네트워크 오류로 키 테스트에 실패했습니다.' });
+    } finally {
+      setTestingKey(false);
+    }
   };
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editPastorName.trim() || !editChurchName.trim()) return;
+    setPersonalGeminiApiKey(editPersonalKey.trim());
+    setHasKey(hasPersonalGeminiApiKey());
     if (onUpdateProfile) {
       onUpdateProfile(editPastorName.trim(), editChurchName.trim());
     }
@@ -156,6 +201,19 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
                     <span>인가된 기기</span>
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={openProfileEditor}
+                  className={`text-[10px] px-2 py-0.5 rounded-full border flex items-center gap-1 cursor-pointer transition-colors ${
+                    hasKey
+                      ? 'bg-indigo-950/70 text-indigo-200 border-indigo-500/40 hover:bg-indigo-900'
+                      : 'bg-amber-950/70 text-amber-300 border-amber-500/40 hover:bg-amber-900'
+                  }`}
+                  title="본인 전용 무료 Gemini API 키 설정 (타인과 공유되지 않음)"
+                >
+                  <Sparkles className="w-2.5 h-2.5" />
+                  <span>{hasKey ? '내 AI 키 연결됨' : '개인 AI 키 등록'}</span>
+                </button>
               </div>
               <h1 className="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2 mt-0.5">
                 <span>{sermonTitle}</span>
@@ -263,6 +321,53 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
                   className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-hidden focus:border-indigo-400"
                   required
                 />
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-amber-300">
+                    🔑 본인 전용 Gemini API 키 (방식 B · 개별 사용)
+                  </label>
+                  <a
+                    href="https://aistudio.google.com/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-indigo-300 hover:underline font-semibold"
+                  >
+                    무료 키 발급받기 ↗
+                  </a>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  구글 AI 스튜디오에서 무료로 발급받은 본인 키(`AIzaSy...`)를 입력하시면, 다른 사용자와 할당량을 공유하지 않고 본인 기기에서만 안전하게 AI 심층·영상 분석을 사용합니다.
+                </p>
+                <div className="flex gap-1.5">
+                  <input
+                    type="password"
+                    value={editPersonalKey}
+                    onChange={(e) => setEditPersonalKey(e.target.value)}
+                    placeholder="AIzaSy... (본인 기기에만 저장됨)"
+                    className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-hidden focus:border-amber-400"
+                  />
+                  <button
+                    type="button"
+                    disabled={testingKey}
+                    onClick={handleTestPersonalKey}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold cursor-pointer shrink-0"
+                  >
+                    {testingKey ? '확인중...' : '연결 테스트'}
+                  </button>
+                </div>
+                {keyTestMsg && (
+                  <div
+                    className={`p-2 rounded-lg text-[11px] ${
+                      keyTestMsg.ok
+                        ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
+                        : 'bg-rose-950/60 border border-rose-500/40 text-rose-300'
+                    }`}
+                  >
+                    {keyTestMsg.text}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">

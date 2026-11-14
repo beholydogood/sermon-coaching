@@ -12,6 +12,7 @@ import {
   ThumbsUp,
 } from 'lucide-react';
 import { ChatMessage, SermonRecord } from '../types/sermon';
+import { getPersonalGeminiApiKey } from '../utils/auth';
 
 interface AiCoachChatProps {
   sermon?: SermonRecord;
@@ -59,7 +60,10 @@ export const AiCoachChat: React.FC<AiCoachChatProps> = ({ sermon }) => {
     try {
       const response = await fetch('/api/chat-coach', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-gemini-key': getPersonalGeminiApiKey(),
+        },
         body: JSON.stringify({
           message: userMsg.content,
           history: messages.slice(-6),
