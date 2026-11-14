@@ -328,7 +328,15 @@ export interface SpeechCoachingData {
   gestureScore: number; // 0-100
   vocalStabilityScore: number; // 0-100
   pacingScore?: number; // 0-100
-  speechPace: '느림' | '안정적(적절)' | '약간 빠름' | '매우 빠름';
+  speechPace:
+    | '느림'
+    | '안정적(적절)'
+    | '약간 빠름'
+    | '매우 빠름'
+    | '차분하고 명료함'
+    | '열정적(다소 빠름)'
+    | '완급 조절 우수'
+    | string;
   habits: SpeechHabitItem[];
   v13?: SpeechCoachingV13Data;
 }
@@ -370,13 +378,18 @@ export interface MetricScore {
 }
 
 export interface ScriptureVerse {
-  verse: number;
+  verse?: number;
+  reference?: string;
   koreanText: string;
   greekOrHebrewKeyword?: string;
   greekKeyword?: string;
+  originalTerm?: string;
+  transliteration?: string;
   originalMeaning?: string;
   greekMeaning?: string;
-  pastoralPoint: string;
+  theologicalMeaning?: string;
+  homileticApplication?: string;
+  pastoralPoint?: string;
 }
 
 export interface LectureCoreConcept {

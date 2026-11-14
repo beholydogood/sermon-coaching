@@ -16,6 +16,11 @@ import {
   Mic,
   EyeOff,
   RefreshCw,
+  Eye,
+  Hand,
+  Volume2,
+  Activity,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   SermonRecord,
@@ -27,6 +32,7 @@ import {
   SermonCommunicationGoalType,
   PracticeDrillStatus,
   SpeechUserCorrection,
+  HabitCategory,
 } from '../types/sermon';
 import {
   buildSpeechCoachingV13Data,
@@ -38,7 +44,6 @@ import {
   SERMON_REFERENCE_LIBRARY_26,
   REFERENCE_LIBRARY_SUMMARY,
   REFERENCE_COVERAGE_GAPS,
-  KIM_WOOJUN_PRELIMINARY_REPORT,
 } from '../data/speechReferenceLibrary';
 import { formatSecToMmSs, parseTimeStringToSec } from '../utils/youtubeSermonDetector';
 import {
@@ -153,10 +158,11 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
   );
   const [correctionNote, setCorrectionNote] = useState('');
 
+  // 상단 무의식적 습관 카테고리 필터 상태
+  const [selectedCategory, setSelectedCategory] = useState<HabitCategory | 'all'>('all');
+
   // 참고 영상 필터 탭 상태
-  const [refFilter, setRefFilter] = useState<
-    'recommended' | 'kim_woojun' | 'all_26' | 'coverage_gaps'
-  >('kim_woojun');
+  const [refFilter, setRefFilter] = useState<'recommended' | 'all_26' | 'coverage_gaps'>('recommended');
 
   // 방식 B: 목회자 개인 Gemini API 키 인라인 설정 상태
   const [showKeyPanel, setShowKeyPanel] = useState(false);
@@ -493,9 +499,49 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
   const recommendedRefs = SERMON_REFERENCE_LIBRARY_26.filter((r) =>
     v13State.recommendedReferenceIds?.includes(r.id)
   );
-  const kimWoojunRefs = SERMON_REFERENCE_LIBRARY_26.filter(
-    (r) => r.category === 'kim_woojun_preliminary'
-  );
+
+  // 상단 기존 메뉴용 습관 필터링 및 뱃지 헬퍼
+  const habits = speechData.habits || [];
+  const filteredHabits =
+    selectedCategory === 'all'
+      ? habits
+      : habits.filter((h) => h.category === selectedCategory);
+
+  const getCategoryBadge = (category: HabitCategory) => {
+    switch (category) {
+      case 'filler':
+        return { label: '말투/추임새', color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' };
+      case 'gesture':
+        return { label: '손버릇/제스처', color: 'bg-blue-500/15 text-blue-300 border-blue-500/30' };
+      case 'gaze':
+        return { label: '시선 처리', color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' };
+      case 'tic':
+        return { label: '틱/무의식적 동작', color: 'bg-rose-500/15 text-rose-300 border-rose-500/30' };
+    }
+  };
+
+  const getSeverityBadge = (sev: 'low' | 'medium' | 'high') => {
+    switch (sev) {
+      case 'high':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+            집중 교정 권장
+          </span>
+        );
+      case 'medium':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+            주의 필요
+          </span>
+        );
+      case 'low':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-700 text-slate-300">
+            경미한 습관
+          </span>
+        );
+    }
+  };
 
   return (
     <div className="space-y-6 text-xs">
@@ -520,25 +566,235 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
-          섹션 1: 실제 분석 연결 상태 & 대상 설교자·설교 적격 구간 선별 (선행 조건)
+          [상단 기본 메뉴] 1. 스피치 종합 지표 대시보드 (4대 카드)
+         ══════════════════════════════════════════════════════════════════ */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80">
+          <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
+            <span className="flex items-center gap-1.5 font-medium">
+              <Eye className="w-3.5 h-3.5 text-emerald-400" />
+              시선 배분 안정도
+            </span>
+            <span className="font-mono text-emerald-400 font-bold">{speechData.eyeContactScore}점</span>
+          </div>
+          <div className="w-full bg-slate-700/60 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-gradient-to-r from-emerald-500 to-teal-400 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${speechData.eyeContactScore}%` }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5 truncate">회중석 3점 분산도 분석</p>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80">
+          <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
+            <span className="flex items-center gap-1.5 font-medium">
+              <Hand className="w-3.5 h-3.5 text-blue-400" />
+              제스처 자연스러움
+            </span>
+            <span className="font-mono text-blue-400 font-bold">{speechData.gestureScore}점</span>
+          </div>
+          <div className="w-full bg-slate-700/60 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-gradient-to-r from-blue-500 to-indigo-400 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${speechData.gestureScore}%` }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5 truncate">설교대 파지 및 개방감</p>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80">
+          <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
+            <span className="flex items-center gap-1.5 font-medium">
+              <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+              발성 및 억양 완급
+            </span>
+            <span className="font-mono text-indigo-400 font-bold">{speechData.vocalStabilityScore}점</span>
+          </div>
+          <div className="w-full bg-slate-700/60 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-gradient-to-r from-indigo-500 to-purple-400 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${speechData.vocalStabilityScore}%` }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5 truncate">성량 조절 및 종결 어미</p>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-800/80 border border-slate-700/80">
+          <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
+            <span className="flex items-center gap-1.5 font-medium">
+              <Activity className="w-3.5 h-3.5 text-amber-400" />
+              설교 스피치 템포
+            </span>
+            <span className="font-semibold text-amber-400">{speechData.speechPace}</span>
+          </div>
+          <div className="w-full bg-slate-700/60 rounded-full h-2 overflow-hidden">
+            <div className="bg-amber-400 h-2 rounded-full" style={{ width: '85%' }} />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5 truncate">분당 약 280-310음절 (적정)</p>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          [상단 기본 메뉴] 2. 설교자 스피치 탁월한 강점 (Vocal Strengths)
+         ══════════════════════════════════════════════════════════════════ */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-800/40 shadow-sm">
+        <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2.5">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>설교자 스피치 탁월한 강점 (VOCAL STRENGTHS)</span>
+        </div>
+        <div className="space-y-2">
+          {(speechData.vocalStrengths || []).map((str, i) => (
+            <div key={i} className="flex items-start gap-2.5 text-xs text-slate-200">
+              <span className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center shrink-0 text-[10px] font-bold mt-0.5">
+                {i + 1}
+              </span>
+              <span className="leading-relaxed">{str}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          [상단 기본 메뉴] 3. 무의식적 습관 & 단점 코칭 (Speech & Mannerism Diagnosis)
+         ══════════════════════════════════════════════════════════════════ */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 border-b border-slate-800 pb-3">
+          <div>
+            <div className="flex items-center gap-2 text-rose-400 text-xs font-bold uppercase tracking-wider mb-1">
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
+              <span>무의식적 습관 &amp; 단점 코칭 (SPEECH &amp; MANNERISM DIAGNOSIS)</span>
+            </div>
+            <p className="text-xs text-slate-400">
+              말투, 손버릇, 시선 쏠림, 틱 등 회중의 몰입을 방해하는 요소를 짚고 실전 교정 훈련법을 제안합니다.
+            </p>
+          </div>
+
+          {/* 카테고리 필터 탭 */}
+          <div className="flex items-center space-x-1 overflow-x-auto bg-slate-950/60 p-1 rounded-xl border border-slate-800 shrink-0">
+            {[
+              { id: 'all', label: '전체' },
+              { id: 'filler', label: '말투/추임새' },
+              { id: 'gesture', label: '손버릇' },
+              { id: 'gaze', label: '시선' },
+              { id: 'tic', label: '틱/동작' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setSelectedCategory(tab.id as any)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                  selectedCategory === tab.id
+                    ? 'bg-indigo-600 text-white font-semibold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 습관별 상세 카드 리스트 */}
+        <div className="space-y-4">
+          {filteredHabits.map((habit) => {
+            const badge = getCategoryBadge(habit.category);
+            return (
+              <div
+                key={habit.id}
+                className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/70 hover:border-slate-600 transition-all space-y-3"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold border ${badge.color}`}>
+                      {badge.label}
+                    </span>
+                    {getSeverityBadge(habit.severity)}
+                    <h4 className="text-sm font-bold text-white">{habit.title}</h4>
+                  </div>
+                  {habit.count && (
+                    <span className="text-xs text-amber-400/90 font-mono bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20 shrink-0">
+                      총 {habit.count}회 감지
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-xs text-slate-300 leading-relaxed pl-1">
+                  {habit.description}
+                </p>
+
+                {/* 타임스탬프 클릭 이동 버튼들 */}
+                {habit.timestamps && habit.timestamps.length > 0 && (
+                  <div className="bg-slate-900/70 p-2.5 rounded-lg border border-slate-800 space-y-1.5">
+                    <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+                      <PlayCircle className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>영상에서 직접 확인하기 (클릭 시 해당 구간 이동):</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {habit.timestamps.map((ts, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => onJumpToTimestamp(ts.seconds)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-200 text-xs border border-indigo-500/30 transition-all cursor-pointer group active:scale-95"
+                          title={ts.note}
+                        >
+                          <PlayCircle className="w-3 h-3 text-indigo-400 group-hover:text-indigo-300" />
+                          <span className="font-mono font-semibold">{ts.timeDisplay}</span>
+                          <span className="text-slate-400 text-[10px] truncate max-w-[150px]">
+                            - {ts.note}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 전문가 교정 훈련 드릴 (Drill) */}
+                <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-500/30 flex items-start gap-2.5">
+                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <span className="font-bold text-amber-300 mr-1.5">【실전 교정 훈련 드릴】</span>
+                    <span className="text-slate-200 leading-relaxed">{habit.remedyTip}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          [하단 마스터 섹션] 스피치 마스터 정밀 코칭 (1~5번)
+         ══════════════════════════════════════════════════════════════════ */}
+      <div className="pt-4 border-t border-slate-800 space-y-5">
+        <div className="flex items-center justify-between flex-wrap gap-2 px-1">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600/25 border border-indigo-500/40 flex items-center justify-center">
+              <Mic className="w-4 h-4 text-indigo-300" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base font-extrabold text-white tracking-tight">
+                  스피치 마스터 정밀 코칭
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  설교 스피치 코칭 마스터 {v13State.promptVersion}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                적격 설교 구간 선별, 실제 장면 관찰·해석, 3~5분 실전 교정 훈련, 개인별 누적 변화 판정 및 참고 자료
+              </p>
+            </div>
+          </div>
+        </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          1. 대상 설교자 및 실제 설교 적격 구간 선별 (비설교 순서·타 출연자 엄격 제외)
          ══════════════════════════════════════════════════════════════════ */}
       <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
           <div className="space-y-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                설교 스피치 코칭 마스터 {v13State.promptVersion}
-              </span>
-              {v13State.capabilities.is_demo_sample ? (
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                  ⚠️ 개발·시연용 예시 데이터 (실제 사용자 누적 이력과 분리됨)
-                </span>
-              ) : (
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                  ✓ 실제 설교 분석 기록 (개인별 이력 분리 저장)
-                </span>
-              )}
-            </div>
             <h3 className="text-sm font-bold text-white">
               1. 대상 설교자 및 실제 설교 적격 구간 선별 (비설교 순서·타 출연자 엄격 제외)
             </h3>
@@ -840,312 +1096,12 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
       ) : (
         <>
           {/* ══════════════════════════════════════════════════════════════════
-              섹션 2: 행사 · 전달 방식 · 청중 · 장면 목적 4축 맥락 기준 설정 (2-A)
-             ══════════════════════════════════════════════════════════════════ */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3.5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <div className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
-                  <Compass className="w-4 h-4" />
-                  <span>{v13State.contextCriteriaBanner}</span>
-                </div>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  행사·전달 방식·청중·발언 목적을 단일 목록으로 섞지 않고 독립 조합하여 전달 적합성을 해석합니다.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsEditingContext(!isEditingContext)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-semibold border border-slate-700 cursor-pointer shrink-0"
-              >
-                <Sliders className="w-3.5 h-3.5" />
-                <span>{isEditingContext ? '맥락 설정 닫기' : '4축 맥락·촬영 조건 변경'}</span>
-              </button>
-            </div>
-
-            <div className="space-y-1.5 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
-              {v13State.contextPriorityFocus.map((p, idx) => (
-                <div key={idx} className="text-slate-300 leading-relaxed flex items-start gap-2">
-                  <span className="text-indigo-400 font-bold">•</span>
-                  <span>{p}</span>
-                </div>
-              ))}
-            </div>
-
-            {isEditingContext && (
-              <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/40 space-y-3.5">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">1. 행사·예배 상황</label>
-                    <select
-                      value={occasion}
-                      onChange={(e) => setOccasion(e.target.value as SermonOccasionType)}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white"
-                    >
-                      {(
-                        [
-                          '주일예배',
-                          '수요·금요예배',
-                          '새벽기도회',
-                          '부흥회',
-                          '수련회',
-                          '결혼식',
-                          '장례식',
-                          '교육·강연',
-                        ] as SermonOccasionType[]
-                      ).map((occ) => (
-                        <option key={occ} value={occ}>
-                          {occ}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      의식 세부 순서 (장례 입관/발인/하관 등)
-                    </label>
-                    <input
-                      type="text"
-                      value={ceremonialStage}
-                      onChange={(e) => setCeremonialStage(e.target.value)}
-                      placeholder="예: 발인예배 / 입관예배 / 결혼 축복"
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      카메라·가림·통역 화면 조건
-                    </label>
-                    <select
-                      value={cameraCondition}
-                      onChange={(e) => setCameraCondition(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white"
-                    >
-                      <option value="시각 화면 미확인 (자막/음성 중심)">
-                        시각 화면 미확인 (자막/음성 중심)
-                      </option>
-                      <option value="강대상/하단 가림 (손동작 일부 또는 전체 비가시)">
-                        강대상 손 가림 (손동작 0회/향상 오판 방지)
-                      </option>
-                      <option value="측면 카메라 (정면 시선과 실제 눈맞춤 불일치)">
-                        측면 카메라 (정면=눈맞춤 환산 제외)
-                      </option>
-                      <option value="수어통역 분할/삽입(PIP) 화면 포함">
-                        수어통역 삽입 화면 포함 (통역자 제스처 제외)
-                      </option>
-                      <option value="정면 카메라 (설교자 상반신·손 확인 가능)">
-                        정면 카메라 (상반신·손 가시)
-                      </option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    2. 전달 방식 (복수 조합 가능 — 예: 부흥회 + 강해 방식)
-                  </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(
-                      ['강해', '주제 설명', '이야기·간증', '권면·호소', '교육·강의', '혼합'] as SermonDeliveryModeType[]
-                    ).map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => toggleMulti(deliveryModes, m, setDeliveryModes)}
-                        className={`px-2.5 py-1 rounded-lg font-medium border cursor-pointer ${
-                          deliveryModes.includes(m)
-                            ? 'bg-indigo-600 text-white border-indigo-400'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      3. 청중 구성 (복수 선택)
-                    </label>
-                    <div className="flex flex-wrap gap-1">
-                      {(
-                        ['장년', '청년', '청소년', '어린이', '혼합 청중'] as SermonAudienceGroupType[]
-                      ).map((aud) => (
-                        <button
-                          key={aud}
-                          type="button"
-                          onClick={() => toggleMulti(audienceGroups, aud, setAudienceGroups)}
-                          className={`px-2 py-1 rounded-md border cursor-pointer ${
-                            audienceGroups.includes(aud)
-                              ? 'bg-emerald-600 text-white border-emerald-400'
-                              : 'bg-slate-800 text-slate-400 border-slate-700'
-                          }`}
-                        >
-                          {aud}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      청중의 성경·신앙 용어 친숙도
-                    </label>
-                    <select
-                      value={vocabFamiliarity}
-                      onChange={(e) => setVocabFamiliarity(e.target.value as any)}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white"
-                    >
-                      <option value="익숙함">익숙함 (기성 성도 중심)</option>
-                      <option value="보통">보통 (낯선 신학 용어는 짧은 풀이 권장)</option>
-                      <option value="낯섦(새신자·비신자 포함)">
-                        낯섦 (하객·조문객·새신자 포함 — 용어 접근성 우선)
-                      </option>
-                      <option value="미확인">미확인</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      4. 발언 목적 (복수 선택)
-                    </label>
-                    <div className="flex flex-wrap gap-1">
-                      {(
-                        ['이해', '기억', '위로', '축복', '성찰', '실천 권유'] as SermonCommunicationGoalType[]
-                      ).map((g) => (
-                        <button
-                          key={g}
-                          type="button"
-                          onClick={() =>
-                            toggleMulti(communicationGoals, g, setCommunicationGoals)
-                          }
-                          className={`px-2 py-1 rounded-md border cursor-pointer ${
-                            communicationGoals.includes(g)
-                              ? 'bg-amber-500 text-slate-950 font-bold border-amber-300'
-                              : 'bg-slate-800 text-slate-400 border-slate-700'
-                          }`}
-                        >
-                          {g}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* 구간별 목적 예외 (예: 부흥회 중 애도·위로 장면) */}
-                <div className="pt-2 border-t border-slate-800">
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    구간별 장면 목적 예외 추가 (예: 부흥회 중 애도·위로 장면에는 높은 활력 기대를 강제하지 않음)
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                    <input
-                      type="text"
-                      value={overrideStartMmSs}
-                      onChange={(e) => setOverrideStartMmSs(e.target.value)}
-                      placeholder="시작 (예: 35:00)"
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white font-mono"
-                    />
-                    <input
-                      type="text"
-                      value={overrideEndMmSs}
-                      onChange={(e) => setOverrideEndMmSs(e.target.value)}
-                      placeholder="종료 (예: 39:00)"
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white font-mono"
-                    />
-                    <input
-                      type="text"
-                      value={overrideGoal}
-                      onChange={(e) => setOverrideGoal(e.target.value)}
-                      placeholder="예: 애도·위로 장면 (절제된 쉼 존중)"
-                      className="sm:col-span-2 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    disabled={reEvaluating}
-                    onClick={handleApplyContextUpdate}
-                    className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold cursor-pointer flex items-center gap-1.5"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${reEvaluating ? 'animate-spin' : ''}`} />
-                    <span>맥락 기준 재적용 (관찰 사실 보존 · 적합성 및 과제 재검토)</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* ══════════════════════════════════════════════════════════════════
-              섹션 3: 이번 영상의 핵심 결론 & 검증된 측정 지표 (단위·분모·제외 범위 명시)
-             ══════════════════════════════════════════════════════════════════ */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900 border border-indigo-500/30 space-y-4">
-            <div>
-              <div className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider mb-1">
-                2. 이번 설교 스피치 코칭 핵심 결론 (100점 단일 총점 대체)
-              </div>
-              <p className="text-xs sm:text-sm text-slate-100 leading-relaxed font-medium">
-                {v13State.coreConclusion}
-              </p>
-            </div>
-
-            {/* 정량 측정 테이블 (정의 · 단위 · 분모 · 제외 구간 · 출처) */}
-            <div className="space-y-2">
-              <div className="text-[11px] font-bold text-slate-300">
-                검증된 측정 지표 및 모달리티별 분모 (근거 없는 수치·소수점 생성 금지 규율 적용)
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {v13State.measurements.map((m) => (
-                  <div
-                    key={m.metricId}
-                    className={`p-3 rounded-xl border ${
-                      m.assessable
-                        ? 'bg-slate-900/90 border-slate-700'
-                        : 'bg-slate-950/70 border-slate-800/80'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-slate-200">{m.label}</span>
-                      {m.assessable ? (
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs">
-                          {m.value}
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-semibold text-[11px]">
-                          평가 보류 (수치 미생성)
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-1">{m.definition}</p>
-                    {m.assessable ? (
-                      <div className="mt-2 pt-2 border-t border-slate-800/80 text-[10px] text-slate-400 space-y-0.5 font-mono">
-                        <div>• 분자/단위: {m.numeratorLabel} ({m.unit})</div>
-                        <div>• 분모(적격 범위): {m.denominatorLabel}</div>
-                        <div>• 측정 도구: {m.toolSource} ({m.toolVersion})</div>
-                      </div>
-                    ) : (
-                      <div className="mt-2 pt-2 border-t border-slate-800/80 text-[11px] text-amber-300/90">
-                        • 보류 사유: {m.unassessableReason}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* ══════════════════════════════════════════════════════════════════
-              섹션 4: 실제 장면 기반 관찰 사실(Fact) · 코치 해석(Interpretation) · 사용자 사실 정정
+              2. 실제 장면 관찰 사실 · 전달 기능 해석 · 목회자 사실 정정
              ══════════════════════════════════════════════════════════════════ */}
           <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
             <div>
               <h3 className="text-sm font-bold text-white">
-                3. 실제 장면 관찰 사실 · 전달 기능 해석 · 목회자 사실 정정
+                2. 실제 장면 관찰 사실 · 전달 기능 해석 · 목회자 사실 정정
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5">
                 어느 장면에서 무엇을 했는가(관찰 사실) → 그 문장의 전달 목적과 어떤 관계가 있는가(해석) → 무엇을 유지하거나 바꿀 것인가를 분리해 기록합니다.
@@ -1310,7 +1266,7 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
           </div>
 
           {/* ══════════════════════════════════════════════════════════════════
-              섹션 5: 3~5분 실전 교정 훈련 설계 (1~2개 중심, 최대 3개 제한)
+              3. 이번 회차 3~5분 실전 교정 훈련 설계 (핵심 1개 과제 집중)
              ══════════════════════════════════════════════════════════════════ */}
           <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 border border-amber-500/30 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
@@ -1318,7 +1274,7 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
                 <div className="flex items-center gap-2 text-amber-400 font-bold">
                   <Sparkles className="w-4 h-4" />
                   <h3 className="text-sm text-white">
-                    4. 이번 회차 3~5분 실전 교정 훈련 설계 (핵심 {v13State.practiceDrills.length}개 과제 집중)
+                    3. 이번 회차 3~5분 실전 교정 훈련 설계 (핵심 {v13State.practiceDrills.length}개 과제 집중)
                   </h3>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-0.5">
@@ -1431,13 +1387,13 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
           </div>
 
           {/* ══════════════════════════════════════════════════════════════════
-              섹션 6: 개인별 누적 기록과 변화 판정 (기준선 / 개선 관찰 / 유지 / 악화 관찰 / 혼재 / 비교 불가)
+              4. 개인별 누적 기록 및 조건부 변화 판정
              ══════════════════════════════════════════════════════════════════ */}
           <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3.5">
             <div className="flex items-center gap-2">
               <History className="w-4 h-4 text-indigo-400" />
               <h3 className="text-sm font-bold text-white">
-                5. 개인별 누적 기록 및 조건부 변화 판정 (허위 향상 보고 방지 규율 적용)
+                4. 개인별 누적 기록 및 조건부 변화 판정
               </h3>
             </div>
 
@@ -1490,7 +1446,7 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
           </div>
 
           {/* ══════════════════════════════════════════════════════════════════
-              섹션 7: 참고 영상 후보 26편 & 김우준 목사 도입부 강점 예비 분석 연결
+              5. 설교형 스피치 참고 자료 26편
              ══════════════════════════════════════════════════════════════════ */}
           <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
@@ -1498,7 +1454,7 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
                 <div className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-emerald-400" />
                   <h3 className="text-sm font-bold text-white">
-                    6. 설교형 스피치 참고 자료 26편 &amp; 김우준 목사 도입부 예비 분석 (v1.3)
+                    5. 설교형 스피치 참고 자료 26편
                   </h3>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-0.5">
@@ -1508,7 +1464,6 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
 
               <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
                 {[
-                  { id: 'kim_woojun', label: '김우준 목사 예비분석 (2편)' },
                   { id: 'recommended', label: `이번 과제 연관 후보 (${recommendedRefs.length})` },
                   { id: 'all_26', label: '전체 후보 26편' },
                   { id: 'coverage_gaps', label: '미확보 영역 현황' },
@@ -1529,116 +1484,7 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
               </div>
             </div>
 
-            {/* 탭 1: 김우준 목사 설교 2편 도입부 예비 분석 (원본 시각 대조 완료) */}
-            {refFilter === 'kim_woojun' && (
-              <div className="space-y-4">
-                <div className="p-3.5 rounded-xl bg-emerald-950/20 border border-emerald-500/30 space-y-1.5">
-                  <div className="font-bold text-emerald-300">
-                    {KIM_WOOJUN_PRELIMINARY_REPORT.title}
-                  </div>
-                  <p className="text-[11px] text-slate-200 leading-relaxed">
-                    • 핵심 판단: {KIM_WOOJUN_PRELIMINARY_REPORT.coreFinding}
-                  </p>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    • 분석 범위 및 주의점: {KIM_WOOJUN_PRELIMINARY_REPORT.scopeDisclaimer} ({KIM_WOOJUN_PRELIMINARY_REPORT.timestampCaution})
-                  </p>
-                </div>
-
-                {kimWoojunRefs.map((item) => (
-                  <div
-                    key={item.id}
-                    className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 space-y-3"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono font-bold text-emerald-400">[{item.id}]</span>
-                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                            상태: 도입부 예비 분석 완료 (전체 영상 검토 전)
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">
-                            실제 행사: {item.occasionTag || '주일예배'}
-                          </span>
-                        </div>
-                        <h4 className="text-sm font-bold text-white mt-1">
-                          {item.speaker} 목사 — {item.title} ({item.organization}, {item.publishedDate})
-                        </h4>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <a
-                          href={item.officialUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white text-[11px] font-semibold"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>원본 영상 링크</span>
-                        </a>
-                        {item.officialListUrl && (
-                          <a
-                            href={item.officialListUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]"
-                          >
-                            <ExternalLink className="w-3 h-3" />
-                            <span>공식 게시물</span>
-                          </a>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* 원본 대조 확인된 장면들 */}
-                    <div className="space-y-2">
-                      {item.preliminaryScenes?.map((sc, sIdx) => (
-                        <div
-                          key={sIdx}
-                          className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-mono font-bold text-amber-300">
-                              원본 대조 시각: {sc.timeDisplay}
-                            </span>
-                            <a
-                              href={sc.urlWithTimestamp}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[11px] text-indigo-300 hover:underline flex items-center gap-1"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              <span>원본 {sc.timeDisplay} 지점 열기</span>
-                            </a>
-                          </div>
-                          <div className="text-slate-200">
-                            <span className="font-bold text-indigo-300 mr-1">[관찰 행동]</span>
-                            {sc.observedBehavior}
-                          </div>
-                          <div className="text-slate-300">
-                            <span className="font-bold text-emerald-300 mr-1">[강점 원리]</span>
-                            {sc.strengthInterpretation}
-                          </div>
-                          <div className="text-amber-200/90">
-                            <span className="font-bold text-amber-300 mr-1">
-                              [다른 목회자가 적용할 연습 (목소리·말투 복제 금지)]
-                            </span>
-                            {sc.practiceTransfer}
-                          </div>
-                          <div className="text-[10px] text-slate-400">
-                            • 적용 제한: {sc.cautionLimit}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="text-[11px] text-rose-300/90 bg-rose-950/20 p-2.5 rounded-lg border border-rose-500/20">
-                      • 분류 및 적용 한계: {item.contextLimits.join(' / ')}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 탭 2 & 3: 이번 과제 연관 후보 또는 전체 후보 26편 */}
+            {/* 탭 1 & 2: 이번 과제 연관 후보 또는 전체 후보 26편 */}
             {(refFilter === 'recommended' || refFilter === 'all_26') && (
               <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
                 {(refFilter === 'recommended' ? recommendedRefs : SERMON_REFERENCE_LIBRARY_26).map(
@@ -1655,19 +1501,11 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
                           <span className="text-slate-500">({item.organization})</span>
                         </div>
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              item.reviewStatus === 'preliminary_intro_analysis'
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                            }`}
-                          >
-                            {item.reviewStatus === 'preliminary_intro_analysis'
-                              ? '도입부 예비 분석 완료 (전체 검토 전)'
-                              : '출처·게시 정보 기반 후보 (시청각 구간 검토 전)'}
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            출처·게시 정보 기반 참고 후보
                           </span>
                           <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">
-                            이용 범위: 원본 공식 링크 (서비스 내 복제·학습 미승인)
+                            이용 범위: 원본 공식 링크
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-300 mt-1">
@@ -1690,7 +1528,7 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
               </div>
             )}
 
-            {/* 탭 4: 유형·대상별 미확보 영역 현황 */}
+            {/* 탭 3: 유형·대상별 미확보 영역 현황 */}
             {refFilter === 'coverage_gaps' && (
               <div className="space-y-2.5">
                 <div className="p-3 rounded-xl bg-amber-950/20 border border-amber-500/30 text-[11px] text-amber-200">
@@ -1722,6 +1560,7 @@ export const SpeechHabitsCoach: React.FC<SpeechHabitsCoachProps> = ({
           </div>
         </>
       )}
+      </div>
     </div>
   );
 };

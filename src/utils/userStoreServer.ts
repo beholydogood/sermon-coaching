@@ -687,9 +687,9 @@ export function syncAccountSermonsOnServer(
       } else {
         // 기존 설교가 있으면 사용자 교정 내용 또는 최신 타임스탬프를 우선 반영
         const existingHasCorrections =
-          Boolean(existing.speechCoaching?.v13?.userCorrections?.corrections?.length);
+          Boolean(existing.speechCoaching?.v13?.userCorrections?.length);
         const incomingHasCorrections =
-          Boolean(c.speechCoaching?.v13?.userCorrections?.corrections?.length);
+          Boolean(c.speechCoaching?.v13?.userCorrections?.length);
 
         if (incomingHasCorrections && !existingHasCorrections) {
           mergedMap.set(c.meta.id, c);

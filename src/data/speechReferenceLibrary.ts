@@ -41,7 +41,7 @@ export const REFERENCE_LIBRARY_SUMMARY = {
   fullyApprovedClips: 0,
   includedVideoFiles: 0,
   statusNotice:
-    '기존 24편은 출처·게시 정보 기반 후보(시청각 구간 검토 전)이며, 김우준 목사 자료 2편(K11·K12)은 도입부 예비 분석 및 일부 원본 시각 대조 상태입니다. 26편 모두 전체 영상 검토·교육용 클립 승인·이용 범위 확인을 마친 상태가 아니므로 원본 공식 링크로만 안내합니다.',
+    '설교형 스피치 참고 자료 26편은 출처·게시 정보 기반 참고 후보이며, 원본 공식 링크로 안내합니다.',
 };
 
 export const REFERENCE_COVERAGE_GAPS = [

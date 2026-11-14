@@ -357,16 +357,31 @@ export default function App() {
         onPlayFromStart={handlePlayFromStart}
         onOpenScripture={() => setIsScriptureModalOpen(true)}
         onPrint={handlePrint}
-        onOpenAnalyzeModal={() => setIsAnalyzeModalOpen(true)}
+        onOpenAnalyzeModal={() => {
+          setIsBookStudioOpen(false);
+          setIsAnalyzeModalOpen(true);
+        }}
         onOpenGrowthModal={() => setIsGrowthModalOpen(true)}
-        onOpenBookStudio={() => setIsBookStudioOpen(true)}
+        onOpenBookStudio={() => setIsBookStudioOpen((prev) => !prev)}
+        isBookStudioOpen={isBookStudioOpen}
         onOpenAdminModal={handleOpenAdminApp}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onUpdateProfile={handleUpdateProfile}
       />
 
-      {/* ─── 메인 컨텐츠: 좌측 사이드바 + 우측 메인 ─── */}
+      {/* ─── 메인 컨텐츠: 설교 코칭 스튜디오 또는 책 집필 스튜디오 ─── */}
       <main style={{ flex: 1, maxWidth: 1400, width: '100%', margin: '0 auto', padding: '20px 16px 40px', boxSizing: 'border-box' }}>
+        {isBookStudioOpen ? (
+          <BookWritingStudio
+            isOpen={true}
+            onClose={() => setIsBookStudioOpen(false)}
+            isSidebarOpen={isSidebarOpen}
+            sermons={sermons}
+            activeSermonId={activeSermon.meta.id}
+            defaultAuthorName={authInfo.pastorName}
+            defaultChurchName={authInfo.churchName}
+          />
+        ) : (
         <div style={{
           display: 'grid',
           gridTemplateColumns: isSidebarOpen ? '340px 1fr' : '1fr',
@@ -510,6 +525,7 @@ export default function App() {
             </div>
           </section>
         </div>
+        )}
       </main>
 
       {/* ─── 풋터 ─── */}
@@ -540,14 +556,6 @@ export default function App() {
       <DeviceAuthModal
         isOpen={isAuthModalOpen}
         onAuthorized={handleDeviceAuthorized}
-      />
-      <BookWritingStudio
-        isOpen={isBookStudioOpen}
-        onClose={() => setIsBookStudioOpen(false)}
-        sermons={sermons}
-        activeSermonId={activeSermon.meta.id}
-        defaultAuthorName={authInfo.pastorName}
-        defaultChurchName={authInfo.churchName}
       />
       <AdminReleaseModal
         isOpen={isAdminModalOpen}

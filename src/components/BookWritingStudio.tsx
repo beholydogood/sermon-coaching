@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   BookOpen,
-  X,
   FileText,
   Upload,
   Sparkles,
@@ -14,16 +13,14 @@ import {
   Trash2,
   Plus,
   ArrowRight,
+  ArrowLeft,
   BookMarked,
   Printer,
-  ChevronRight,
   Library,
   PenTool,
   FileUp,
-  FileCheck,
   RefreshCw,
-  FolderPlus,
-  HelpCircle,
+  Calendar,
 } from 'lucide-react';
 import {
   SermonRecord,
@@ -32,206 +29,344 @@ import {
   BookChapterDraft,
 } from '../types/sermon';
 import { buildStrategicBookPlan } from '../utils/bookGenerator';
-import { getPersonalGeminiApiKey } from '../utils/auth';
+import { getPersonalGeminiApiKey, getDeviceAuthInfo } from '../utils/auth';
+
+export interface SavedBookProject {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  bookType: BookProject['bookType'];
+  writingStyle: BookProject['writingStyle'];
+  authorName: string;
+  churchName: string;
+  selectedSermonIds: string[];
+  uploadedMaterials: UploadedMaterial[];
+  proposal: BookProject['proposal'];
+  chapters: BookChapterDraft[];
+}
 
 interface BookWritingStudioProps {
   isOpen: boolean;
   onClose: () => void;
+  isSidebarOpen?: boolean;
   sermons: SermonRecord[];
   activeSermonId?: string;
   defaultAuthorName?: string;
   defaultChurchName?: string;
 }
 
+const getBookProjectsStorageKey = (): string => {
+  try {
+    const auth = getDeviceAuthInfo();
+    const key = (auth.licenseKey || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    if (key) return `sermon_coaching_book_projects_v1_${key}`;
+  } catch {
+    // ignore
+  }
+  return 'sermon_coaching_book_projects_v1_default';
+};
+
 export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
   isOpen,
   onClose,
+  isSidebarOpen = true,
   sermons,
   activeSermonId,
   defaultAuthorName,
   defaultChurchName,
 }) => {
-  const [activeStep, setActiveStep] = useState<'materials' | 'proposal' | 'chapters' | 'export'>('materials');
+  const createDefaultProjects = (): SavedBookProject[] => {
+    const author = defaultAuthorName || sermons[0]?.meta.preacher || '이은혜 담임목사';
+    const church = defaultChurchName || sermons[0]?.meta.churchName || '은혜의빛교회';
+    const firstIds = sermons.length > 0 ? [sermons[0].meta.id] : [];
+    const allIds = sermons.map((s) => s.meta.id);
 
-  // 1. 도서 기본 메타
-  const [bookType, setBookType] = useState<BookProject['bookType']>('에세이/신앙성숙');
-  const [writingStyle, setWritingStyle] = useState<BookProject['writingStyle']>('따뜻한 감성 에세이체');
-  const [authorName, setAuthorName] = useState(defaultAuthorName || '이은혜 담임목사');
-  const [churchName, setChurchName] = useState(defaultChurchName || '은혜의빛교회');
+    const plan1 = buildStrategicBookPlan({
+      bookType: '에세이/신앙성숙',
+      writingStyle: '따뜻한 감성 에세이체',
+      authorName: author,
+      churchName: church,
+      sermons: sermons.length > 0 ? [sermons[0]] : [],
+      materials: [],
+    });
 
-  useEffect(() => {
-    if (defaultAuthorName) setAuthorName(defaultAuthorName);
-    if (defaultChurchName) setChurchName(defaultChurchName);
-  }, [defaultAuthorName, defaultChurchName, isOpen]);
+    const plan2 = buildStrategicBookPlan({
+      bookType: '강해설교집',
+      writingStyle: '깊이 있는 강해·신학체',
+      authorName: author,
+      churchName: church,
+      sermons: sermons.length > 1 ? sermons.slice(0, 3) : sermons,
+      materials: [],
+    });
 
-  // 2. 선택된 설교 목록
-  const [selectedSermonIds, setSelectedSermonIds] = useState<string[]>(() => {
-    if (sermons.length >= 2) return sermons.map((s) => s.meta.id);
-    if (activeSermonId) return [activeSermonId];
-    return sermons.map((s) => s.meta.id);
+    const today = new Date().toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+
+    return [
+      {
+        id: 'book-proj-1',
+        createdAt: today,
+        updatedAt: today,
+        bookType: '에세이/신앙성숙',
+        writingStyle: '따뜻한 감성 에세이체',
+        authorName: author,
+        churchName: church,
+        selectedSermonIds: firstIds,
+        uploadedMaterials: [],
+        proposal: plan1.proposal,
+        chapters: plan1.chapters,
+      },
+      {
+        id: 'book-proj-2',
+        createdAt: today,
+        updatedAt: today,
+        bookType: '강해설교집',
+        writingStyle: '깊이 있는 강해·신학체',
+        authorName: author,
+        churchName: church,
+        selectedSermonIds: allIds.length > 0 ? allIds : firstIds,
+        uploadedMaterials: [],
+        proposal: {
+          ...plan2.proposal,
+          mainTitle:
+            plan2.proposal.mainTitle === plan1.proposal.mainTitle
+              ? '강단에서 피어나는 언약의 복음'
+              : plan2.proposal.mainTitle,
+        },
+        chapters: plan2.chapters,
+      },
+    ];
+  };
+
+  const [projects, setProjects] = useState<SavedBookProject[]>(() => {
+    try {
+      const raw = localStorage.getItem(getBookProjectsStorageKey());
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return createDefaultProjects();
   });
 
-  // 3. 업로드된 참고 자료 목록 (실제 업로드한 PDF, PPTX, DOCX, HWPX, TXT 및 직접 입력 메모)
-  const [uploadedMaterials, setUploadedMaterials] = useState<UploadedMaterial[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string>(() => projects[0]?.id || 'book-proj-1');
+  const [activeStep, setActiveStep] = useState<'materials' | 'proposal' | 'chapters' | 'export'>('materials');
+
+  const activeProject = projects.find((p) => p.id === activeProjectId) || projects[0];
+
+  // 현재 선택된 프로젝트의 상태들
+  const [bookType, setBookType] = useState<BookProject['bookType']>(
+    activeProject?.bookType || '에세이/신앙성숙'
+  );
+  const [writingStyle, setWritingStyle] = useState<BookProject['writingStyle']>(
+    activeProject?.writingStyle || '따뜻한 감성 에세이체'
+  );
+  const [authorName, setAuthorName] = useState(
+    activeProject?.authorName || defaultAuthorName || '이은혜 담임목사'
+  );
+  const [churchName, setChurchName] = useState(
+    activeProject?.churchName || defaultChurchName || '은혜의빛교회'
+  );
+  const [selectedSermonIds, setSelectedSermonIds] = useState<string[]>(
+    activeProject?.selectedSermonIds || (activeSermonId ? [activeSermonId] : sermons.map((s) => s.meta.id))
+  );
+  const [uploadedMaterials, setUploadedMaterials] = useState<UploadedMaterial[]>(
+    activeProject?.uploadedMaterials || []
+  );
+  const [proposal, setProposal] = useState<BookProject['proposal']>(
+    activeProject?.proposal || {
+      mainTitle: '모든 것이 선을 이루는 밤',
+      subTitle: '삶의 가장 깊은 어둠 속에서 만나는 하나님의 신비한 섭리',
+      alternativeTitles: [
+        '고난의 밤에도 하나님의 손길은 멈추지 않는다',
+        '합력하여 선을 이루시는 하나님',
+        '그럼에도 불구하고 피어나는 은혜',
+      ],
+      publishingIntent:
+        '예측 불가능한 인생의 상실과 상처 앞에서 "하나님은 왜 나에게 이런 고난을 허락하셨는가"를 묻는 성도들에게, 값싼 위로나 감정적 힐링을 넘어선 로마서 8장의 주권적 언약 복음을 전하고자 기획되었습니다.',
+      targetReaders:
+        '1. 예기치 않은 질병, 재정, 가정의 고난으로 기도가 메마른 성도\n2. 하나님의 침묵 앞에서 회의와 갈등을 겪고 있는 3040 청장년\n3. 상처받은 이웃을 깊이 보듬고 위로하고 싶은 목회자 및 순장·구역장',
+      differentiationPoints: [
+        '설교 현장의 뜨거운 영성과 감동을 정제된 문학적 문어체 에세이로 재탄생',
+        '원어(쉬네르게이) 신학의 탄탄한 깊이와 일상 직장·가정에서의 구체적 실천 묵상 결합',
+        '각 장마다 독자가 혼자 기록할 수 있는 [묵상 노트]와 [마무리 치유 기도문] 수록',
+      ],
+      editorialNote:
+        '강단 구어체의 추임새와 반복 표현을 과감히 걷어내고, 독자의 내면에 깊이 파고드는 1인칭 고백형 문체로 윤문합니다.',
+    }
+  );
+  const [chapters, setChapters] = useState<BookChapterDraft[]>(activeProject?.chapters || []);
+
   const [isExtractingFiles, setIsExtractingFiles] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [manualNoteTitle, setManualNoteTitle] = useState('');
   const [manualNoteText, setManualNoteText] = useState('');
-
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // 4. 생성된 도서 기획안
-  const [proposal, setProposal] = useState<BookProject['proposal']>({
-    mainTitle: '모든 것이 선을 이루는 밤',
-    subTitle: '삶의 가장 깊은 어둠 속에서 만나는 하나님의 신비한 섭리',
-    alternativeTitles: [
-      '고난의 밤에도 하나님의 손길은 멈추지 않는다',
-      '합력하여 선을 이루시는 하나님',
-      '그럼에도 불구하고 피어나는 은혜',
-    ],
-    publishingIntent:
-      '예측 불가능한 인생의 상실과 상처 앞에서 "하나님은 왜 나에게 이런 고난을 허락하셨는가"를 묻는 성도들에게, 값싼 위로나 감정적 힐링을 넘어선 로마서 8장의 주권적 언약 복음을 전하고자 기획되었습니다.',
-    targetReaders:
-      '1. 예기치 않은 질병, 재정, 가정의 고난으로 기도가 메마른 성도\n2. 하나님의 침묵 앞에서 회의와 갈등을 겪고 있는 3040 청장년\n3. 상처받은 이웃을 깊이 보듬고 위로하고 싶은 목회자 및 순장·구역장',
-    differentiationPoints: [
-      '설교 현장의 뜨거운 영성과 감동을 정제된 문학적 문어체 에세이로 재탄생',
-      '원어(쉬네르게이) 신학의 탄탄한 깊이와 일상 직장·가정에서의 구체적 실천 묵상 결합',
-      '각 장마다 독자가 혼자 기록할 수 있는 [묵상 노트]와 [마무리 치유 기도문] 수록',
-    ],
-    editorialNote:
-      '강단 구어체의 추임새와 반복 표현을 과감히 걷어내고, 독자의 내면에 깊이 파고드는 1인칭 고백형 문체로 윤문합니다.',
-  });
-
-  // 5. 챕터별 원고 초안 목록
-  const [chapters, setChapters] = useState<BookChapterDraft[]>([
-    {
-      chapterNum: 1,
-      partTitle: '제1부 | 침묵의 밤을 지날 때',
-      chapterTitle: '우리의 기도가 침묵에 갇힐 때',
-      subtitle: '응답 없는 고난의 터널 속에서 하나님의 눈물을 발견하다',
-      scriptureFocus: '로마서 8장 28절 (상반절)',
-      coreMessage: '고난은 하나님의 부재가 아니라, 그분의 더 깊은 섭리가 시작되는 신호탄이다.',
-      subSections: [
-        '1. 왜 간절한 기도에도 밤은 길어질까?',
-        '2. 침묵하시는 하나님, 그 거룩한 기다림',
-        '3. 상처가 사명이 되는 역설의 은혜',
-      ],
-      manuscriptDraft: `인생의 어떤 밤은 기도를 삼켜버립니다.
-아무리 목놓아 부르짖어도 하늘은 놋쇠처럼 굳게 닫혀 있는 것만 같고, 돌아오는 메아리는 차가운 한숨뿐인 계절을 우리는 마주하곤 합니다.
-"하나님, 제가 주님을 위해 얼마나 헌신했습니까? 왜 저에게 이런 일이 일어난 것입니까?"
-
-욥의 탄식은 다른 누군가의 이야기가 아닙니다. 바로 오늘, 직장에서 예기치 않은 통보를 받고, 병원 검사 결과지 앞에서 무너져 내린 우리 자신의 고백입니다.
-그러나 성경은 침묵의 한가운데서 우리에게 아주 조용하지만 단호한 진리를 선포합니다.
-"우리가 알거니와 하나님을 사랑하는 자 곧 그의 뜻대로 부르심을 입은 자들에게는 모든 것이 합력하여 선을 이루느니라." (롬 8:28)
-
-여기서 바울은 "우리가 느끼거니와"라고 말하지 않습니다. 감정은 흔들릴 수 있습니다. 현실의 파도는 우리를 집어삼킬 듯 덮쳐옵니다.
-그러나 신앙이란 파도의 높이를 보며 절망하는 감정이 아니라, 보이지 않는 바다 밑바닥을 지탱하시는 하나님의 약속을 "아는 것"입니다.
-
-하나님은 우리의 기도를 잊으신 적이 없습니다.
-우리가 어둠 속에 갇혀 있다고 울부짖는 바로 그 순간에도, 주님의 거룩한 조율의 손길은 단 1초도 쉬지 않고 합력(쉬네르게이)을 향해 움직이고 계십니다.`,
-      reflectionQuestions: [
-        '최근 하나님의 침묵 앞에서 가장 아프게 부르짖었던 기도의 제목은 무엇입니까?',
-        '나의 감정보다 앞서 붙잡아야 할 하나님의 변함없는 언약의 말씀은 무엇입니까?',
-      ],
-      closingPrayer:
-        '주님, 응답이 보이지 않는 깊은 밤에도 주님의 선하심을 의심하지 않게 하옵소서. 고난의 흉터 속에 숨겨진 하나님의 신비를 겸손히 찬양하게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.',
-      wordCount: 780,
-    },
-    {
-      chapterNum: 2,
-      partTitle: '제1부 | 침묵의 밤을 지날 때',
-      chapterTitle: '쉬네르게이, 부서진 조각들의 오케스트라',
-      subtitle: '아픔과 눈물이 모여 하나님의 가장 아름다운 교향곡이 된다',
-      scriptureFocus: '로마서 8장 28절 (하반절)',
-      coreMessage: '하나님은 모든 상반된 재료를 조합하여 영원한 선을 빚어내시는 거룩한 마에스트로이시다.',
-      subSections: [
-        '1. 헬라어 쉬네르게이의 신비',
-        '2. 실패와 상실까지도 악보의 쉼표가 될 때',
-        '3. 성도의 삶에 우연이란 없다',
-      ],
-      manuscriptDraft: `헬라어 성경을 펼치면 '합력하여'라는 단어에 '쉬네르게이(synergei)'라는 깊은 울림의 원어가 자리하고 있습니다.
-이 단어는 '함께(syn)'와 '일하다(ergon)'가 결합된 말이며, 오늘날 우리가 쓰는 '시너지(Synergy)'의 어원이기도 합니다.
-
-화가가 캔버스에 그림을 그릴 때, 눈부신 흰색과 화려한 금빛만으로 걸작을 만들 수는 없습니다.
-그림의 깊이와 입체감은 가장 어둡고 짙은 검은색 물감이 칠해질 때 비로소 완성됩니다.
-우리의 인생도 마찬가지입니다. 성공과 기쁨만이 하나님의 은혜가 아닙니다.
-우리가 겪었던 뼈아픈 실패, 사람에게 배신당했던 눈물의 자리, 도저히 이해할 수 없었던 고독의 밤들이 하나님의 손에서 '함께' 일하기 시작합니다.
-
-하나님은 실수를 모르시는 거룩한 작곡가이십니다.
-오늘 당신의 손에 쥐어진 부서진 조각들을 주님께 내어드리십시오.
-주님은 그 상처의 조각을 모아 세상에서 가장 감동적인 십자가의 멜로디를 연주하실 것입니다.`,
-      reflectionQuestions: [
-        '내 삶에서 가장 버리고 싶었던 아픈 과거의 상처가 하나님의 은혜로 해석된 경험이 있습니까?',
-        '오늘 내가 겪는 고난의 재료를 마에스트로 되신 하나님께 온전히 내어맡길 수 있습니까?',
-      ],
-      closingPrayer:
-        '하나님 아버지, 나의 부족함과 깨어진 조각들까지도 합력하여 선으로 빚으시는 주님의 주권을 신뢰합니다. 절망을 찬양으로 바꾸어 주옵소서. 예수 그리스도의 이름으로 기도드립니다. 아멘.',
-      wordCount: 820,
-    },
-    {
-      chapterNum: 3,
-      partTitle: '제2부 | 하나님의 영원한 설계도',
-      chapterTitle: '미리 아시고 정하신 사랑의 닻',
-      subtitle: '창세 전부터 나를 부르신 그 사랑은 결코 실패하지 않는다',
-      scriptureFocus: '로마서 8장 29절',
-      coreMessage: '우리를 향한 구원의 여정은 사람의 결단이 아닌 하나님의 영원한 주권 속에 단단히 닻을 내리고 있다.',
-      subSections: [
-        '1. 예지와 예정: 흔들리지 않는 신자의 신분',
-        '2. 아들의 형상을 본받는 성화의 과정',
-        '3. 맏아들의 영광에 동참하는 감격',
-      ],
-      manuscriptDraft: `세상의 사랑은 조건적입니다.
-우리가 능력이 있고, 매력적이며, 쓸모가 있을 때는 박수를 보내지만, 힘을 잃고 쓰러지면 가차 없이 등을 돌립니다.
-하지만 성경이 선포하는 하나님의 사랑은 완전히 다릅니다.
-"하나님이 미리 아신 자들을 또한 그 아들의 형상을 본받게 하기 위하여 미리 정하셨으니..." (롬 8:29)
-
-바울은 우리의 구원이 어제 시작된 즉흥적인 사건이 아니라고 말합니다.
-창세 전, 온 우주가 생겨나기도 전에 하나님께서는 이미 당신의 이름을 아셨고, 당신을 향한 사랑의 설계를 품으셨습니다.
-그러므로 우리의 구원과 삶은 결코 우연의 산물이 아닙니다.`,
-      reflectionQuestions: [
-        '조건 없는 하나님의 사랑 앞에서 나의 존재 가치를 새롭게 고백해 보십시오.',
-        '내 삶의 궁극적 목표가 세상의 성공이 아닌 "예수 그리스도의 형상을 닮아가는 것"이 되고 있습니까?',
-      ],
-      closingPrayer:
-        '영원 전부터 나를 아시고 자녀 삼아주신 아버지 하나님, 세상의 평가에 흔들리지 않고 그리스도 안에서 누리는 참된 평안을 누리게 하옵소서. 아멘.',
-      wordCount: 710,
-    },
-  ]);
 
   const [selectedChapterIdx, setSelectedChapterIdx] = useState<number>(0);
   const [isGeneratingProposal, setIsGeneratingProposal] = useState(false);
   const [isGeneratingChapter, setIsGeneratingChapter] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
 
-  // 선택된 설교 목록(1편 vs 다중 설교) 및 업로드 자료가 바뀔 때마다 모든 설교를 종합 분석하여 기획안과 챕터 초안을 즉시 전략적으로 재편성
+  // 프로젝트 목록 localStorage 자동 저장
   useEffect(() => {
-    const selectedSermonsData = sermons.filter((s) => selectedSermonIds.includes(s.meta.id));
+    try {
+      localStorage.setItem(getBookProjectsStorageKey(), JSON.stringify(projects));
+    } catch {
+      // ignore
+    }
+  }, [projects]);
+
+  // 현재 편집 중인 내용을 activeProject에 동기화
+  useEffect(() => {
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === activeProjectId
+          ? {
+              ...p,
+              bookType,
+              writingStyle,
+              authorName,
+              churchName,
+              selectedSermonIds,
+              uploadedMaterials,
+              proposal,
+              chapters,
+            }
+          : p
+      )
+    );
+  }, [
+    activeProjectId,
+    bookType,
+    writingStyle,
+    authorName,
+    churchName,
+    selectedSermonIds,
+    uploadedMaterials,
+    proposal,
+    chapters,
+  ]);
+
+  // 좌측 사이드바에서 다른 도서 프로젝트를 클릭했을 때 로드
+  const handleSelectProject = (proj: SavedBookProject) => {
+    setActiveProjectId(proj.id);
+    setBookType(proj.bookType);
+    setWritingStyle(proj.writingStyle);
+    setAuthorName(proj.authorName);
+    setChurchName(proj.churchName);
+    setSelectedSermonIds(proj.selectedSermonIds);
+    setUploadedMaterials(proj.uploadedMaterials);
+    setProposal(proj.proposal);
+    setChapters(proj.chapters);
+    setSelectedChapterIdx(0);
+  };
+
+  // 새 도서 집필 프로젝트 생성
+  const handleCreateNewProject = () => {
+    const author = defaultAuthorName || authorName || '이은혜 담임목사';
+    const church = defaultChurchName || churchName || '은혜의빛교회';
+    const initialSermonIds = activeSermonId
+      ? [activeSermonId]
+      : sermons.length > 0
+      ? [sermons[0].meta.id]
+      : [];
+    const targetSermons = sermons.filter((s) => initialSermonIds.includes(s.meta.id));
+
+    const strategicPlan = buildStrategicBookPlan({
+      bookType: '에세이/신앙성숙',
+      writingStyle: '따뜻한 감성 에세이체',
+      authorName: author,
+      churchName: church,
+      sermons: targetSermons.length > 0 ? targetSermons : sermons.slice(0, 1),
+      materials: [],
+    });
+
+    const today = new Date().toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+
+    const newProjNumber = projects.length + 1;
+    const newProj: SavedBookProject = {
+      id: `book-proj-${Date.now()}`,
+      createdAt: today,
+      updatedAt: today,
+      bookType: '에세이/신앙성숙',
+      writingStyle: '따뜻한 감성 에세이체',
+      authorName: author,
+      churchName: church,
+      selectedSermonIds: initialSermonIds,
+      uploadedMaterials: [],
+      proposal: {
+        ...strategicPlan.proposal,
+        mainTitle: `새 도서 프로젝트 #${newProjNumber}: ${strategicPlan.proposal.mainTitle}`,
+      },
+      chapters: strategicPlan.chapters,
+    };
+
+    setProjects((prev) => [newProj, ...prev]);
+    handleSelectProject(newProj);
+    setActiveStep('materials');
+  };
+
+  // 도서 프로젝트 삭제
+  const handleDeleteProject = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (projects.length <= 1) {
+      alert('최소 1개의 도서 집필 프로젝트는 유지되어야 합니다.');
+      return;
+    }
+    const remaining = projects.filter((p) => p.id !== id);
+    setProjects(remaining);
+    if (activeProjectId === id && remaining[0]) {
+      handleSelectProject(remaining[0]);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  // 설교 선택 토글 및 전략 기획안 자동 재편성
+  const recalculatePlan = (
+    nextSermonIds: string[],
+    nextMaterials: UploadedMaterial[],
+    nextBookType = bookType,
+    nextWritingStyle = writingStyle,
+    nextAuthor = authorName,
+    nextChurch = churchName
+  ) => {
+    const selectedSermonsData = sermons.filter((s) => nextSermonIds.includes(s.meta.id));
     if (selectedSermonsData.length === 0) return;
 
     const strategicPlan = buildStrategicBookPlan({
-      bookType,
-      writingStyle,
-      authorName,
-      churchName,
+      bookType: nextBookType,
+      writingStyle: nextWritingStyle,
+      authorName: nextAuthor,
+      churchName: nextChurch,
       sermons: selectedSermonsData,
-      materials: uploadedMaterials,
+      materials: nextMaterials,
     });
 
     setProposal(strategicPlan.proposal);
     setChapters(strategicPlan.chapters);
     setSelectedChapterIdx(0);
-  }, [selectedSermonIds, uploadedMaterials, bookType, writingStyle, authorName, churchName, sermons]);
-
-  if (!isOpen) return null;
-
-  // 설교 선택 토글
-  const handleToggleSermon = (id: string) => {
-    setSelectedSermonIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
   };
 
-  // 자료 파일 업로드 핸들러 (실제 파일 본문 텍스트 추출 API 연동)
+  const handleToggleSermon = (id: string) => {
+    const nextIds = selectedSermonIds.includes(id)
+      ? selectedSermonIds.filter((item) => item !== id)
+      : [...selectedSermonIds, id];
+    setSelectedSermonIds(nextIds);
+    recalculatePlan(nextIds, uploadedMaterials);
+  };
+
+  // 자료 파일 업로드 핸들러
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -253,13 +388,11 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
         let extractedText = '';
         let summaryPoint = '';
 
-        // 1) 텍스트 파일은 브라우저에서 즉시 원문 읽기
         if (ext === 'txt' || ext === 'md' || ext === 'csv') {
           const raw = await file.text();
           extractedText = raw.trim().slice(0, 2500);
           summaryPoint = raw.trim().split('\n')[0]?.slice(0, 140) || `${file.name} 핵심 원문`;
         } else {
-          // 2) PDF / PPTX / DOCX / HWPX는 Base64 변환 후 서버 파서 API로 실제 텍스트 추출
           const base64Data = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(String(reader.result || ''));
@@ -312,7 +445,9 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
         });
       }
 
-      setUploadedMaterials((prev) => [...parsedItems, ...prev]);
+      const nextMaterials = [...parsedItems, ...uploadedMaterials];
+      setUploadedMaterials(nextMaterials);
+      recalculatePlan(selectedSermonIds, nextMaterials);
     } finally {
       setIsExtractingFiles(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -338,7 +473,9 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
         minute: '2-digit',
       }),
     };
-    setUploadedMaterials((prev) => [newMat, ...prev]);
+    const nextMaterials = [newMat, ...uploadedMaterials];
+    setUploadedMaterials(nextMaterials);
+    recalculatePlan(selectedSermonIds, nextMaterials);
     setManualNoteTitle('');
     setManualNoteText('');
     setIsAddingNote(false);
@@ -346,25 +483,23 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
 
   // 업로드 자료의 추출 본문 직접 수정
   const handleUpdateMaterialText = (id: string, nextText: string) => {
-    setUploadedMaterials((prev) =>
-      prev.map((m) =>
-        m.id === id
-          ? {
-              ...m,
-              extractedText: nextText,
-              summaryPoint: nextText.trim().split('\n')[0]?.slice(0, 140) || m.summaryPoint,
-            }
-          : m
-      )
+    const nextMaterials = uploadedMaterials.map((m) =>
+      m.id === id
+        ? {
+            ...m,
+            extractedText: nextText,
+            summaryPoint: nextText.trim().split('\n')[0]?.slice(0, 140) || m.summaryPoint,
+          }
+        : m
     );
+    setUploadedMaterials(nextMaterials);
   };
 
-  // AI 도서 기획안 생성/업데이트 (선택된 모든 설교와 참고자료를 종합하여 전략 기획)
+  // AI 도서 기획안 생성/업데이트
   const handleGenerateProposal = async () => {
     setIsGeneratingProposal(true);
     const selectedSermonsData = sermons.filter((s) => selectedSermonIds.includes(s.meta.id));
 
-    // 먼저 클라이언트 전략 기획 엔진으로 모든 선택 설교(1~N편) + 자료 통합 기획안 생성
     const strategicPlan = buildStrategicBookPlan({
       bookType,
       writingStyle,
@@ -397,7 +532,6 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
 
       if (res.ok) {
         const data = await res.json();
-        // 서버가 선택된 설교 수에 맞는 충분한 챕터(단일 4장 이상, 다중 설교 시 설교당 2장 이상)를 반환한 경우 반영
         if (
           data.proposal &&
           data.chapters &&
@@ -510,24 +644,158 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const currentChapter = chapters[selectedChapterIdx] || chapters[0];
+  const currentChapter = chapters[selectedChapterIdx] || chapters[0] || {
+    chapterNum: 1,
+    partTitle: '제1부',
+    chapterTitle: '첫 번째 챕터',
+    subtitle: '부제',
+    scriptureFocus: '성경 본문',
+    coreMessage: '',
+    subSections: [],
+    manuscriptDraft: '',
+    reflectionQuestions: [],
+    closingPrayer: '',
+    wordCount: 0,
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-6xl h-[92vh] shadow-2xl flex flex-col overflow-hidden text-slate-100">
-        
-        {/* ─── 상단 헤더 ─── */}
-        <div className="px-5 py-4 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between shrink-0">
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: isSidebarOpen ? '340px 1fr' : '1fr',
+        gap: 20,
+        alignItems: 'start',
+        minHeight: 0,
+      }}
+    >
+      {/* ══ 좌측: 도서 집필 프로젝트 아카이브 사이드바 (설교 피드백 아카이브와 동일 구조) ══ */}
+      {isSidebarOpen && (
+        <aside style={{ position: 'sticky', top: 20, maxHeight: 'calc(100vh - 100px)', overflowY: 'auto' }}>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex flex-col overflow-hidden">
+            {/* 상단 헤더 */}
+            <div className="p-4 border-b border-slate-800 bg-slate-900/80">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center space-x-2">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <BookMarked className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
+                      <span>도서 집필 프로젝트</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                        {projects.length}권 집필 중
+                      </span>
+                    </h2>
+                    <p className="text-[11px] text-slate-400">여러 권의 책을 동시에 기획·집필합니다</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 새 도서 프로젝트 만들기 버튼 */}
+              <button
+                type="button"
+                onClick={handleCreateNewProject}
+                style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
+                className="w-full py-2.5 px-3 rounded-xl font-extrabold text-xs border border-amber-300 shadow-lg shadow-amber-500/25 flex items-center justify-center space-x-1.5 transition-all cursor-pointer active:scale-98"
+              >
+                <Plus className="w-4 h-4 text-slate-950" />
+                <span>새 도서 집필 프로젝트 만들기</span>
+              </button>
+            </div>
+
+            {/* 도서 프로젝트 리스트 */}
+            <div className="p-3 space-y-2.5">
+              {projects.map((proj, index) => {
+                const isActive = proj.id === activeProjectId;
+                const totalNum = projects.length - index;
+                const totalChars = proj.chapters.reduce((acc, c) => acc + (c.wordCount || 800), 0);
+
+                return (
+                  <div
+                    key={proj.id}
+                    onClick={() => handleSelectProject(proj)}
+                    className={`group relative p-3.5 rounded-xl border transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-gradient-to-r from-amber-950/60 via-slate-800/90 to-slate-800/80 border-amber-500/60 shadow-lg shadow-amber-500/10'
+                        : 'bg-slate-800/40 border-slate-800 hover:bg-slate-800/80 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center space-x-1.5 text-[11px] text-slate-400">
+                        <span className="font-mono font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                          #{totalNum}권
+                        </span>
+                        <Calendar className="w-3 h-3 text-slate-500" />
+                        <span>{proj.updatedAt}</span>
+                      </div>
+
+                      <div className="flex items-center space-x-1">
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+                          {proj.chapters.length}개 챕터
+                        </span>
+                        {projects.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteProject(proj.id, e)}
+                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition-opacity cursor-pointer"
+                            title="도서 프로젝트 삭제"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <h3
+                      className={`text-xs font-bold mt-2 line-clamp-1 ${
+                        isActive ? 'text-white' : 'text-slate-200'
+                      }`}
+                    >
+                      {proj.proposal.mainTitle}
+                    </h3>
+
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-800/80 text-[11px]">
+                      <span className="text-amber-300/90 font-medium truncate max-w-[165px]">
+                        {proj.bookType} • 설교 {proj.selectedSermonIds.length}편
+                      </span>
+                      <div className="flex items-center space-x-2 text-slate-400">
+                        <span>약 {totalChars.toLocaleString()}자</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 하단: 설교 코칭 스튜디오 복귀 버튼 */}
+            <div className="p-3 border-t border-slate-800 bg-slate-900/90">
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 flex items-center justify-center space-x-2 transition-colors cursor-pointer"
+              >
+                <ArrowLeft className="w-4 h-4 text-indigo-400" />
+                <span>설교 코칭 스튜디오로 돌아가기</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+      )}
+
+      {/* ══ 우측: 선택한 도서 프로젝트 집필 스테이지 ══ */}
+      <section className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl flex flex-col overflow-hidden text-slate-100 min-w-0">
+        {/* ─── 상단 프로젝트 헤더 ─── */}
+        <div className="px-5 py-4 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-amber-500/20">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-amber-500/20 shrink-0">
               <BookMarked className="w-5 h-5 text-white" />
             </div>
             <div>
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 flex-wrap">
                 <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
                   AI 출판 &amp; 도서 집필 스튜디오
                 </span>
-                <span className="text-xs text-slate-400">• 설교 구어체 ➜ 출판 문어체 윤문</span>
+                <span className="text-xs text-slate-400">• {bookType} ({writingStyle})</span>
               </div>
               <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2 mt-0.5">
                 <span>{proposal.mainTitle}</span>
@@ -536,32 +804,36 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 flex-wrap">
             <button
+              type="button"
               onClick={handleCopyAll}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors cursor-pointer"
             >
               {copiedAll ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               <span>{copiedAll ? '복사 완료!' : '원고 복사'}</span>
             </button>
             <button
+              type="button"
               onClick={handleDownloadMarkdown}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white shadow-md shadow-amber-600/30 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-semibold text-white shadow-md shadow-amber-600/30 transition-all cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span>원고 다운로드 (.md)</span>
             </button>
             <button
+              type="button"
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors ml-1"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 text-xs font-bold text-indigo-200 border border-indigo-500/40 transition-colors cursor-pointer"
             >
-              <X className="w-5 h-5" />
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>설교 코칭 화면으로</span>
             </button>
           </div>
         </div>
 
         {/* ─── 4단계 프로세스 네비게이션 탭 ─── */}
-        <div className="px-5 py-2.5 bg-slate-950/60 border-b border-slate-800/80 flex items-center gap-2 overflow-x-auto shrink-0">
+        <div className="px-5 py-3 bg-slate-950/70 border-b border-slate-800/80 flex items-center gap-2 overflow-x-auto">
           {[
             { id: 'materials', stepNum: '1단계', label: '자료 수집 & 설교 선택', count: `${selectedSermonIds.length}편 / ${uploadedMaterials.length}개 자료` },
             { id: 'proposal',  stepNum: '2단계', label: '도서 기획안 & 목차',    count: `${chapters.length}개 챕터 구성` },
@@ -570,18 +842,29 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
           ].map((tab) => (
             <button
               key={tab.id}
+              type="button"
               onClick={() => setActiveStep(tab.id as any)}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
                 activeStep === tab.id
                   ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                  : 'bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
               }`}
             >
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-md ${activeStep === tab.id ? 'bg-slate-950/30 text-slate-950 font-extrabold' : 'bg-slate-800 text-slate-400'}`}>
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded-md ${
+                  activeStep === tab.id
+                    ? 'bg-slate-950/30 text-slate-950 font-extrabold'
+                    : 'bg-slate-800 text-amber-400 font-bold'
+                }`}
+              >
                 {tab.stepNum}
               </span>
               <span>{tab.label}</span>
-              <span className={`text-[10px] opacity-80 ${activeStep === tab.id ? 'text-slate-900 font-medium' : 'text-slate-500'}`}>
+              <span
+                className={`text-[10px] opacity-80 ${
+                  activeStep === tab.id ? 'text-slate-900 font-medium' : 'text-slate-400'
+                }`}
+              >
                 ({tab.count})
               </span>
             </button>
@@ -589,21 +872,23 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
         </div>
 
         {/* ─── 메인 바디 컨텐츠 ─── */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-950/40">
-
+        <div className="p-4 sm:p-6 bg-slate-950/40">
           {/* ════════════════════════════════════════════════════════════
               1단계: 자료 수집 및 설교 선택 (MATERIALS)
              ════════════════════════════════════════════════════════════ */}
           {activeStep === 'materials' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              
+            <div className="space-y-6">
               {/* 도서 장르 및 저자 설정 바 */}
               <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1">도서 장르 / 출판 형태</label>
                   <select
                     value={bookType}
-                    onChange={(e) => setBookType(e.target.value as any)}
+                    onChange={(e) => {
+                      const nextType = e.target.value as BookProject['bookType'];
+                      setBookType(nextType);
+                      recalculatePlan(selectedSermonIds, uploadedMaterials, nextType, writingStyle);
+                    }}
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-400"
                   >
                     <option value="에세이/신앙성숙">따뜻한 감성 신앙 에세이집</option>
@@ -618,7 +903,11 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                   <label className="block text-xs font-semibold text-slate-400 mb-1">윤문 문체 (Writing Tone)</label>
                   <select
                     value={writingStyle}
-                    onChange={(e) => setWritingStyle(e.target.value as any)}
+                    onChange={(e) => {
+                      const nextStyle = e.target.value as BookProject['writingStyle'];
+                      setWritingStyle(nextStyle);
+                      recalculatePlan(selectedSermonIds, uploadedMaterials, bookType, nextStyle);
+                    }}
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-amber-400"
                   >
                     <option value="따뜻한 감성 에세이체">따뜻한 감성 에세이체 (공감·치유)</option>
@@ -654,7 +943,9 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                   <div>
                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
                       <Library className="w-4 h-4 text-amber-400" />
-                      <span>원고로 집필할 누적 설교 영상 선택 ({selectedSermonIds.length}편 선택됨 → 총 {chapters.length}개 챕터 자동 편성)</span>
+                      <span>
+                        이 책에 포함할 설교 영상 선택 ({selectedSermonIds.length}편 선택됨 → 총 {chapters.length}개 챕터 자동 편성)
+                      </span>
                     </h3>
                     <p className="text-xs text-slate-400 mt-0.5">
                       1편 선택 시 해당 설교를 4개 장으로 심층 확장하며, 여러 편 선택 시 모든 설교의 본문과 대지를 부(Part)별로 엮어 통합 기획합니다.
@@ -663,7 +954,11 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => setSelectedSermonIds(sermons.map((s) => s.meta.id))}
+                      onClick={() => {
+                        const allIds = sermons.map((s) => s.meta.id);
+                        setSelectedSermonIds(allIds);
+                        recalculatePlan(allIds, uploadedMaterials);
+                      }}
                       className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-[11px] font-bold text-amber-300 cursor-pointer"
                     >
                       전체 설교 선택 ({sermons.length}편)
@@ -671,7 +966,11 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                     {selectedSermonIds.length > 1 && (
                       <button
                         type="button"
-                        onClick={() => setSelectedSermonIds([sermons[0]?.meta.id].filter(Boolean))}
+                        onClick={() => {
+                          const firstOnly = [sermons[0]?.meta.id].filter(Boolean);
+                          setSelectedSermonIds(firstOnly);
+                          recalculatePlan(firstOnly, uploadedMaterials);
+                        }}
                         className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] text-slate-300 cursor-pointer"
                       >
                         1편만 선택
@@ -770,7 +1069,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
 
                 {/* 직접 메모 붙여넣기 인라인 폼 */}
                 {isAddingNote && (
-                  <div className="mb-3 p-3.5 rounded-xl bg-slate-950/80 border border-amber-500/40 space-y-2.5 animate-in fade-in">
+                  <div className="mb-3 p-3.5 rounded-xl bg-slate-950/80 border border-amber-500/40 space-y-2.5">
                     <input
                       type="text"
                       value={manualNoteTitle}
@@ -849,7 +1148,11 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
 
                         <button
                           type="button"
-                          onClick={() => setUploadedMaterials((prev) => prev.filter((m) => m.id !== mat.id))}
+                          onClick={() => {
+                            const nextMats = uploadedMaterials.filter((m) => m.id !== mat.id);
+                            setUploadedMaterials(nextMats);
+                            recalculatePlan(selectedSermonIds, nextMats);
+                          }}
                           className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer"
                           title="자료 삭제"
                         >
@@ -864,6 +1167,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
               {/* 기획안 생성 버튼 */}
               <div className="text-center pt-2">
                 <button
+                  type="button"
                   onClick={handleGenerateProposal}
                   disabled={isGeneratingProposal || selectedSermonIds.length === 0}
                   style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
@@ -878,7 +1182,6 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                   <ArrowRight className="w-4 h-4 ml-1" />
                 </button>
               </div>
-
             </div>
           )}
 
@@ -886,8 +1189,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
               2단계: 도서 출판 기획안 (PROPOSAL)
              ════════════════════════════════════════════════════════════ */}
           {activeStep === 'proposal' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              
+            <div className="space-y-6">
               {/* 다중 설교 & 자료 통합 편성 전략 브리핑 배너 */}
               <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-slate-900 border border-amber-500/30">
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
@@ -936,8 +1238,9 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                     <h3 className="text-base font-bold text-white mt-0.5">도서 출판 기획안 &amp; 핵심 컨셉</h3>
                   </div>
                   <button
+                    type="button"
                     onClick={() => setActiveStep('chapters')}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-xs font-bold text-slate-950 transition-colors"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-xs font-bold text-slate-950 transition-colors cursor-pointer"
                   >
                     <span>챕터별 원고 집필로 이동</span>
                     <ArrowRight className="w-3.5 h-3.5" />
@@ -1008,6 +1311,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                     <span>전체 목차 기획안 ({chapters.length}개 챕터)</span>
                   </h3>
                   <button
+                    type="button"
                     onClick={() => {
                       const newCh: BookChapterDraft = {
                         chapterNum: chapters.length + 1,
@@ -1023,7 +1327,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                       };
                       setChapters([...chapters, newCh]);
                     }}
-                    className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-semibold"
+                    className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>새 챕터 추가</span>
@@ -1052,11 +1356,12 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                       </div>
 
                       <button
+                        type="button"
                         onClick={() => {
                           setSelectedChapterIdx(idx);
                           setActiveStep('chapters');
                         }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-white flex items-center gap-1 shrink-0"
+                        className="px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-white flex items-center gap-1 shrink-0 cursor-pointer"
                       >
                         <Edit3 className="w-3.5 h-3.5 text-amber-400" />
                         <span>원고 집필</span>
@@ -1065,7 +1370,6 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                   ))}
                 </div>
               </div>
-
             </div>
           )}
 
@@ -1074,7 +1378,6 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
              ════════════════════════════════════════════════════════════ */}
           {activeStep === 'chapters' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              
               {/* 좌측: 챕터 선택 네비게이터 (4 cols) */}
               <div className="lg:col-span-4 space-y-2">
                 <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 mb-2">
@@ -1087,8 +1390,9 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                 {chapters.map((ch, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => setSelectedChapterIdx(idx)}
-                    className={`w-full text-left p-3 rounded-xl border transition-all ${
+                    className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer ${
                       selectedChapterIdx === idx
                         ? 'bg-amber-500/15 border-amber-500/50 text-white shadow-xs'
                         : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
@@ -1106,7 +1410,6 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
 
               {/* 우측: 챕터 원고 에디터 (8 cols) */}
               <div className="lg:col-span-8 p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-                
                 {/* 챕터 타이틀 & AI 윤문 버튼 */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
                   <div>
@@ -1121,6 +1424,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                   </div>
 
                   <button
+                    type="button"
                     onClick={() => handleGenerateChapterDraft(selectedChapterIdx)}
                     disabled={isGeneratingChapter}
                     style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
@@ -1177,9 +1481,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                     </p>
                   </div>
                 </div>
-
               </div>
-
             </div>
           )}
 
@@ -1187,8 +1489,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
               4단계: 전체 원고 인쇄 및 내보내기 (EXPORT)
              ════════════════════════════════════════════════════════════ */}
           {activeStep === 'export' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              
+            <div className="space-y-6">
               {/* 상단 내보내기 도구 모음 */}
               <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -1201,24 +1502,27 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
+                    type="button"
                     onClick={handleCopyAll}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors cursor-pointer"
                   >
                     {copiedAll ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedAll ? '클립보드 복사됨' : '전체 원고 복사'}</span>
                   </button>
                   <button
+                    type="button"
                     onClick={handleDownloadMarkdown}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white shadow-md shadow-amber-600/30 transition-all"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white shadow-md shadow-amber-600/30 transition-all cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>마크다운(.md) 저장</span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => window.print()}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-md shadow-indigo-600/30 transition-all"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-md shadow-indigo-600/30 transition-all cursor-pointer"
                   >
                     <Printer className="w-3.5 h-3.5" />
                     <span>인쇄 / PDF 출력</span>
@@ -1227,7 +1531,7 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
               </div>
 
               {/* 출판 원고 프리뷰 영역 */}
-              <div className="p-6 sm:p-8 rounded-2xl bg-slate-900 border border-slate-800 font-serif text-slate-200 leading-relaxed text-xs sm:text-sm space-y-6 shadow-inner max-h-[50vh] overflow-y-auto">
+              <div className="p-6 sm:p-8 rounded-2xl bg-slate-900 border border-slate-800 font-serif text-slate-200 leading-relaxed text-xs sm:text-sm space-y-6 shadow-inner">
                 <div className="text-center border-b border-slate-800 pb-6">
                   <span className="text-xs text-amber-400 font-sans font-bold uppercase tracking-wider">{bookType}</span>
                   <h1 className="text-xl sm:text-2xl font-bold text-white mt-1">{proposal.mainTitle}</h1>
@@ -1259,22 +1563,19 @@ export const BookWritingStudio: React.FC<BookWritingStudioProps> = ({
                   </div>
                 ))}
               </div>
-
             </div>
           )}
-
         </div>
 
         {/* ─── 풋터 안내 바 ─── */}
-        <div className="px-5 py-3 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs text-slate-400 shrink-0">
+        <div className="px-5 py-3 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs text-slate-400">
           <span className="flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>설교학 기반 AI 출판 윤문 엔진 가동 중 • 설교 구어체를 전문 출판사 제출용 문어체로 정밀 변환합니다.</span>
+            <span>다중 도서 프로젝트 동시 집필 지원 • 선택한 프로젝트마다 기획안과 원고가 자동 저장됩니다.</span>
           </span>
-          <span className="font-mono text-slate-500">v2.4 Book Studio</span>
+          <span className="font-mono text-slate-500">v2.5.2 Book Studio</span>
         </div>
-
-      </div>
+      </section>
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Check,
   Sparkles,
@@ -9,10 +10,8 @@ import {
   BookMarked,
   Download,
   ArrowUpCircle,
-  Edit3,
   X,
   Bell,
-  KeyRound,
 } from 'lucide-react';
 import { SermonMeta, DeviceAuthInfo, AppReleaseInfo } from '../types/sermon';
 import {
@@ -29,6 +28,7 @@ interface SermonHeaderProps {
   onOpenAnalyzeModal: () => void;
   onOpenGrowthModal: () => void;
   onOpenBookStudio?: () => void;
+  isBookStudioOpen?: boolean;
   onOpenAdminModal?: () => void;
   onToggleSidebar?: () => void;
   onUpdateProfile?: (pastorName: string, churchName: string) => void;
@@ -43,6 +43,7 @@ interface SermonHeaderProps {
 export const SermonHeader: React.FC<SermonHeaderProps> = ({
   onOpenAnalyzeModal,
   onOpenBookStudio,
+  isBookStudioOpen,
   onToggleSidebar,
   onUpdateProfile,
   authInfo,
@@ -230,34 +231,7 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
 
           {/* 우측 퀵 컨트롤 버튼들 */}
           <div className="flex items-center space-x-2 flex-wrap gap-y-2">
-            {/* 1. 📢 공지 & 업데이트 버튼 (항상 최상단 노출) */}
-            <button
-              onClick={() => setIsNoticeBoardOpen(true)}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 text-xs font-bold border border-indigo-400/50 shadow-md shadow-indigo-950/40 transition-all cursor-pointer active:scale-95"
-              title="공지사항, 최신 기능 업데이트 내역 확인 및 최신 버전 즉시 새로고침"
-            >
-              <Bell className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
-              <span>공지</span>
-              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-400 text-slate-950 tracking-tight leading-none">
-                NEW
-              </span>
-            </button>
-
-            {/* 2. 🔑 개인 AI 키 버튼 (직접 클릭 가능) */}
-            <button
-              onClick={openProfileEditor}
-              className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer active:scale-95 ${
-                hasKey
-                  ? 'bg-slate-800 hover:bg-slate-750 text-emerald-300 border-emerald-500/40 shadow-sm'
-                  : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-400/50 shadow-md shadow-amber-500/20'
-              }`}
-              title="Google Gemini 개인 API 키(무료) 등록 및 연결 상태 확인"
-            >
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>{hasKey ? '개인 AI 키: 연결됨' : '🔑 개인 AI 키 등록'}</span>
-            </button>
-
-            {/* 3. 사이드바 버튼 */}
+            {/* 1. 사이드바 버튼 */}
             {onToggleSidebar && (
               <button
                 onClick={onToggleSidebar}
@@ -269,7 +243,7 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
               </button>
             )}
 
-            {/* 4. 새 설교 등록 & 코칭 (사이드바와 책 집필 스튜디오 사이 배치) */}
+            {/* 2. 새 설교 등록 & 코칭 (사이드바와 책 집필 스튜디오 사이 배치) */}
             <button
               onClick={onOpenAnalyzeModal}
               style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#020617' }}
@@ -280,20 +254,37 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
               <span>새 설교 등록 &amp; 코칭</span>
             </button>
 
-            {/* 5. 책 집필 스튜디오 버튼 */}
+            {/* 3. 책 집필 스튜디오 버튼 */}
             {onOpenBookStudio && (
               <button
                 onClick={onOpenBookStudio}
-                style={{ background: 'linear-gradient(135deg, #d97706 0%, #ea580c 100%)', color: '#ffffff' }}
+                style={
+                  isBookStudioOpen
+                    ? { background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)', color: '#ffffff' }
+                    : { background: 'linear-gradient(135deg, #d97706 0%, #ea580c 100%)', color: '#ffffff' }
+                }
                 className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold border border-amber-400/40 shadow-md shadow-amber-600/25 transition-all cursor-pointer active:scale-95"
-                title="설교 영상 및 자료 기반 도서 기획 & 원고 초안 생성"
+                title="설교 영상 및 자료 기반 도서 기획 & 원고 초안 생성 (메인 화면 전환)"
               >
                 <BookMarked className="w-4 h-4 text-amber-100" />
-                <span>책 집필 스튜디오</span>
+                <span>{isBookStudioOpen ? '설교 코칭 화면으로' : '책 집필 스튜디오'}</span>
               </button>
             )}
 
-            {/* 6. 기기 앱 설치 PWA */}
+            {/* 4. 📢 공지 & 업데이트 게시판 버튼 ('책 집필 스튜디오' 뒤쪽 배치) */}
+            <button
+              onClick={() => setIsNoticeBoardOpen(true)}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 text-xs font-bold border border-indigo-400/50 shadow-md shadow-indigo-950/40 transition-all cursor-pointer active:scale-95"
+              title="공지사항 게시판 열기, 최신 기능 업데이트 확인 및 최신 버전 즉시 새로고침"
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+              <span>공지</span>
+              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-400 text-slate-950 tracking-tight leading-none">
+                NEW
+              </span>
+            </button>
+
+            {/* 5. 기기 앱 설치 PWA */}
             {!isInstalled && (
               <button
                 onClick={handleInstallPwa}
@@ -309,118 +300,121 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
       </div>
 
       {/* ─── 이름 및 소속 교회 수정 모달 ─── */}
-      {isEditingProfile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-5 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-              <div className="flex items-center gap-2">
-                <Church className="w-4 h-4 text-indigo-400" />
-                <h3 className="text-sm font-bold text-white">목회자 성함 · 소속 교회 수정</h3>
-              </div>
-              <button
-                onClick={() => setIsEditingProfile(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveProfile} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  소속 교회 / 사역지명
-                </label>
-                <input
-                  type="text"
-                  value={editChurchName}
-                  onChange={(e) => setEditChurchName(e.target.value)}
-                  placeholder="예: 사랑의교회"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-hidden focus:border-indigo-400"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  목회자 성함 / 직분
-                </label>
-                <input
-                  type="text"
-                  value={editPastorName}
-                  onChange={(e) => setEditPastorName(e.target.value)}
-                  placeholder="예: 홍길동 담임목사"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-hidden focus:border-indigo-400"
-                  required
-                />
-              </div>
-
-              <div className="pt-2 border-t border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-amber-300">
-                    🔑 본인 전용 Gemini API 키 (방식 B · 개별 사용)
-                  </label>
-                  <a
-                    href="https://aistudio.google.com/apikey"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[11px] text-indigo-300 hover:underline font-semibold"
-                  >
-                    무료 키 발급받기 ↗
-                  </a>
+      {isEditingProfile &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-5 shadow-2xl">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+                <div className="flex items-center gap-2">
+                  <Church className="w-4 h-4 text-indigo-400" />
+                  <h3 className="text-sm font-bold text-white">목회자 성함 · 소속 교회 수정</h3>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  구글 AI 스튜디오에서 무료로 발급받은 본인 키(`AQ...` 또는 `AIzaSy...`)를 입력하시면, 다른 사용자와 할당량을 공유하지 않고 본인 기기에서만 안전하게 AI 심층·영상 분석을 사용합니다.
-                </p>
-                <div className="flex gap-1.5">
+                <button
+                  onClick={() => setIsEditingProfile(false)}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveProfile} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    소속 교회 / 사역지명
+                  </label>
                   <input
-                    type="password"
-                    value={editPersonalKey}
-                    onChange={(e) => setEditPersonalKey(e.target.value)}
-                    placeholder="AQ... 또는 AIzaSy... (본인 기기에만 저장됨)"
-                    className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-hidden focus:border-amber-400"
+                    type="text"
+                    value={editChurchName}
+                    onChange={(e) => setEditChurchName(e.target.value)}
+                    placeholder="예: 사랑의교회"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-hidden focus:border-indigo-400"
+                    required
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    목회자 성함 / 직분
+                  </label>
+                  <input
+                    type="text"
+                    value={editPastorName}
+                    onChange={(e) => setEditPastorName(e.target.value)}
+                    placeholder="예: 홍길동 담임목사"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-hidden focus:border-indigo-400"
+                    required
+                  />
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-amber-300">
+                      🔑 본인 전용 Gemini API 키 (방식 B · 개별 사용)
+                    </label>
+                    <a
+                      href="https://aistudio.google.com/apikey"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] text-indigo-300 hover:underline font-semibold"
+                    >
+                      무료 키 발급받기 ↗
+                    </a>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    구글 AI 스튜디오에서 무료로 발급받은 본인 키(`AQ...` 또는 `AIzaSy...`)를 입력하시면, 다른 사용자와 할당량을 공유하지 않고 본인 기기에서만 안전하게 AI 심층·영상 분석을 사용합니다.
+                  </p>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="password"
+                      value={editPersonalKey}
+                      onChange={(e) => setEditPersonalKey(e.target.value)}
+                      placeholder="AQ... 또는 AIzaSy... (본인 기기에만 저장됨)"
+                      className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-hidden focus:border-amber-400"
+                    />
+                    <button
+                      type="button"
+                      disabled={testingKey}
+                      onClick={handleTestPersonalKey}
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold cursor-pointer shrink-0"
+                    >
+                      {testingKey ? '확인중...' : '연결 테스트'}
+                    </button>
+                  </div>
+                  {keyTestMsg && (
+                    <div
+                      className={`p-2 rounded-lg text-[11px] ${
+                        keyTestMsg.ok
+                          ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
+                          : 'bg-rose-950/60 border border-rose-500/40 text-rose-300'
+                      }`}
+                    >
+                      {keyTestMsg.text}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
                   <button
                     type="button"
-                    disabled={testingKey}
-                    onClick={handleTestPersonalKey}
-                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold cursor-pointer shrink-0"
+                    onClick={() => setIsEditingProfile(false)}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
                   >
-                    {testingKey ? '확인중...' : '연결 테스트'}
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/30 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>변경 내용 저장</span>
                   </button>
                 </div>
-                {keyTestMsg && (
-                  <div
-                    className={`p-2 rounded-lg text-[11px] ${
-                      keyTestMsg.ok
-                        ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
-                        : 'bg-rose-950/60 border border-rose-500/40 text-rose-300'
-                    }`}
-                  >
-                    {keyTestMsg.text}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditingProfile(false)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/30 cursor-pointer flex items-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>변경 내용 저장</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* ─── 📢 공지 & 업데이트 모달 ─── */}
       <NoticeBoardModal
