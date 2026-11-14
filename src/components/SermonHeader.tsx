@@ -132,26 +132,24 @@ export const SermonHeader: React.FC<SermonHeaderProps> = ({
             </div>
             <div>
               <div className="flex items-center space-x-2 flex-wrap text-xs">
-                <span className="font-bold uppercase tracking-wider text-indigo-300">
-                  {churchName}
-                </span>
-                <span className="text-slate-500">•</span>
-                <span className="text-amber-300 font-semibold flex items-center gap-1">
-                  <UserCheck className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{preacherName}</span>
-                </span>
                 <button
+                  type="button"
                   onClick={openProfileEditor}
-                  className="inline-flex items-center gap-1 text-[11px] text-slate-300 hover:text-white bg-slate-800 hover:bg-indigo-600/80 px-2 py-0.5 rounded-md border border-slate-700 hover:border-indigo-400 transition-all cursor-pointer"
-                  title="목회자 성함 및 소속 교회명 수정"
+                  className="font-bold uppercase tracking-wider text-indigo-300 hover:text-indigo-200 hover:underline transition-colors cursor-pointer"
+                  title="클릭하여 소속 교회명 및 성함 수정"
                 >
-                  <Edit3 className="w-3 h-3 text-indigo-300" />
-                  <span>이름·교회 수정</span>
+                  {churchName}
                 </button>
                 <span className="text-slate-500">•</span>
-                <span className="text-[11px] text-slate-300 font-medium bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
-                  {meta.date}
-                </span>
+                <button
+                  type="button"
+                  onClick={openProfileEditor}
+                  className="text-amber-300 hover:text-amber-200 font-semibold flex items-center gap-1 hover:underline transition-colors cursor-pointer"
+                  title="클릭하여 목회자 성함 및 소속 교회명 수정"
+                >
+                  <UserCheck className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{preacherName}</span>
+                </button>
                 {authInfo?.isAuthorized && (
                   <span className="text-[10px] text-emerald-300 font-mono bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
                     <ShieldCheck className="w-3 h-3 text-emerald-400" />
