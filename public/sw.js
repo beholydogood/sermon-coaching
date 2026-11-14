@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sermon-studio-cache-v2.5.2';
+const CACHE_NAME = 'sermon-studio-cache-v2.5.3';
 
 self.addEventListener('install', (event) => {
   // 새 서비스 워커가 설치되는 즉시 활성화 대기 상태를 건너뜀

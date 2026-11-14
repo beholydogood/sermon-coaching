@@ -1845,8 +1845,17 @@ async function startServer() {
   const isProd = process.env.NODE_ENV === 'production' || !fs.existsSync(path.resolve(ROOT_DIR, 'src'));
 
   if (isProd && fs.existsSync(distPath)) {
-    app.use(express.static(distPath));
+    app.use(
+      express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('index.html') || filePath.endsWith('sw.js')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+          }
+        },
+      })
+    );
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
       res.sendFile(path.resolve(distPath, 'index.html'));
     });
   } else {
